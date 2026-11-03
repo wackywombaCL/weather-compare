@@ -2,11 +2,12 @@ name: Daily forecast log
 
 # Sets each source's forecast at 6am Pacific and scores yesterday's.
 # GitHub cron runs in UTC: 13:07 and 14:07 UTC cover 6am in both PDT and PST
-# (the script skips the run that lands at 5am). 15:07 is a backup in case
-# GitHub delays or drops a scheduled run.
+# (the script skips the run that lands at 5am). The later runs are backups:
+# GitHub often delays scheduled runs and sometimes drops them. Each run only
+# does what's still missing (set today's forecast until 10am, score finished days).
 on:
   schedule:
-    - cron: "7 13,14,15 * * *"
+    - cron: "7 13,14,15,16,18 * * *"
   workflow_dispatch:
     inputs:
       force:

@@ -331,7 +331,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
       const L = +Ls;
       const win = { start: lead.coverStart ?? lead.windowStart, end: lead.windowEnd };
       const partial = win.start - lead.windowStart >= 2 * 3600e3;
-      if (now < win.end + 20 * 60e3) continue;          // window not over yet
+      if (now < win.end + 5 * 60e3) continue;           // window not over yet (the 5:53am report is out by ~6:05)
       if (now - win.end > 6 * 24 * 3600e3) continue;    // too old: NWS keeps about a week of observations
       for (const loc of LOCATIONS) {
         const Lc = snap.locations[loc.id];
