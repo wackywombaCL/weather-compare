@@ -15,6 +15,7 @@
   --s5: #e87ba4;  /* Tomorrow.io */
   --s6: #008300;  /* WeatherAPI.com */
   --s7: #6250d6;  /* Visual Crossing */
+  --s8: #e34948;  /* OpenWeatherMap */
   --avg: #0b0b0b;
   --band: rgba(11,11,11,.10);
   --warn: #b25b00;
@@ -25,7 +26,7 @@
     color-scheme: dark;
     --bg: #111110; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
     --text: #f0efec; --text-2: #c3c2b7; --text-3: #8f8e86; --accent: #3987e5;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --avg: #f0efec; --band: rgba(240,239,236,.12);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --avg: #f0efec; --band: rgba(240,239,236,.12);
     --warn: #f0a24a; --shadow: none;
   }
 }
@@ -33,7 +34,7 @@
   color-scheme: dark;
   --bg: #111110; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
   --text: #f0efec; --text-2: #c3c2b7; --text-3: #8f8e86; --accent: #3987e5;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --avg: #f0efec; --band: rgba(240,239,236,.12);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --avg: #f0efec; --band: rgba(240,239,236,.12);
   --warn: #f0a24a; --shadow: none;
 }
 * { box-sizing: border-box; }

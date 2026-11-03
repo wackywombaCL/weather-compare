@@ -9,7 +9,7 @@ export const PRESETS = {
 };
 
 // Sources still to be added once API keys are in hand.
-export const PENDING_SOURCES = ["OpenWeatherMap", "Weatherbit"];
+export const PENDING_SOURCES = ["Weatherbit"];
 
 // ---------- Request options (the Node job sets a User-Agent; browsers can't) ----------
 let requestInit = {};
@@ -303,6 +303,63 @@ async function fetchVisualCrossing(loc, signal) {
   return { current, hourly, daily, cost: j.queryCost, note: "Visual Crossing's model blend" };
 }
 
+// OpenWeatherMap condition ids -> category
+function owmCat(id) {
+  if (id >= 200 && id < 300) return "thunder";
+  if (id >= 300 && id < 400) return "drizzle";
+  if (id === 500 || id === 520) return "drizzle";
+  if (id === 511) return "sleet";
+  if (id >= 500 && id < 600) return "rain";
+  if (id >= 611 && id <= 616) return "sleet";
+  if (id >= 600 && id < 700) return "snow";
+  if (id === 701 || id === 741) return "fog";
+  if (id >= 700 && id < 800) return "haze";
+  if (id === 800) return "clear";
+  if (id === 801 || id === 802) return "partly";
+  return "cloudy";
+}
+async function fetchOWM(loc, signal) {
+  const key = needKey("owm");
+  const q = `lat=${(+loc.lat).toFixed(4)}&lon=${(+loc.lon).toFixed(4)}&units=imperial&appid=${encodeURIComponent(key)}`;
+  // Free plan: current weather + 5-day forecast in 3-hour steps (two requests).
+  const [cw, fc] = await Promise.all([
+    getJSON(`https://api.openweathermap.org/data/2.5/weather?${q}`, { signal }),
+    getJSON(`https://api.openweathermap.org/data/2.5/forecast?${q}`, { signal }),
+  ]);
+  const tz = loc.tz;
+  const w0 = cw.weather?.[0] || {};
+  const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : "—";
+  const current = {
+    temp: cw.main?.temp, feels: cw.main?.feels_like, humidity: cw.main?.humidity, wind: cw.wind?.speed, windDir: cw.wind?.deg,
+    cat: owmCat(w0.id), text: cap(w0.description), night: /n$/.test(w0.icon || ""), observedAt: (cw.dt || Date.now() / 1000) * 1000, kind: "model",
+  };
+  const pts = (fc.list || []).map(x => {
+    const w = x.weather?.[0] || {};
+    return { t: x.dt * 1000, temp: x.main?.temp, pop: isNum(x.pop) ? Math.round(x.pop * 100) : null, cat: owmCat(w.id), text: cap(w.description), night: x.sys?.pod === "n", wind: x.wind?.speed };
+  }).sort((a, b) => a.t - b.t);
+  // The forecast starts at the next 3-hour step; start from current conditions so "now" isn't blank.
+  const h0 = Math.floor(Date.now() / 3600e3) * 3600e3;
+  if (pts.length && pts[0].t > h0 && isNum(current.temp)) pts.unshift({ t: h0, temp: current.temp, pop: pts[0].pop, cat: current.cat, text: current.text, night: current.night, wind: current.wind });
+  // Fill in each hour: temperature interpolated between 3-hour points; conditions and rain chance
+  // carried from the 3-hour block the hour falls in.
+  const hourly = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const steps = b ? Math.round((b.t - a.t) / 3600e3) : 1;
+    for (let k = 0; k < steps; k++) {
+      const t = a.t + k * 3600e3;
+      const temp = b && isNum(a.temp) && isNum(b.temp) ? a.temp + (b.temp - a.temp) * k / steps : a.temp;
+      const h = localHour(t, tz);
+      hourly.push({ ...a, t, temp, night: k === 0 ? a.night : (h < 7 || h >= 18), interp: k > 0 });
+    }
+  }
+  const daily = dailyFromPoints(hourly, tz);
+  const today = dayKey(Date.now(), tz);
+  if (daily[today]) daily[today].partial = true;
+  for (const v of Object.values(daily)) v.text = catLabel(v.cat, false);
+  return { current, hourly, daily, note: "Forecast in 3-hour steps (hours between are filled in)" };
+}
+
 async function fetchPirate(loc, signal) {
   const key = needKey("pirate");
   const j = await getJSON(`https://api.pirateweather.net/forecast/${encodeURIComponent(key)}/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}?units=us&extend=hourly&exclude=minutely,alerts`, { signal });
@@ -398,4 +455,6 @@ export const SOURCES = [
     key: { env: "WEATHERAPI_KEY", signup: "https://www.weatherapi.com/my/" } },
   { id: "visualcrossing", name: "Visual Crossing",     short: "VisualX",    site: "https://www.visualcrossing.com", color: "var(--s7)", fetch: fetchVisualCrossing,
     key: { env: "VISUALCROSSING_KEY", signup: "https://www.visualcrossing.com/account" }, cacheMin: 30 },
+  { id: "owm",       name: "OpenWeatherMap",           short: "OpenWeather", site: "https://openweathermap.org", color: "var(--s8)", fetch: fetchOWM,
+    key: { env: "OWM_KEY", signup: "https://home.openweathermap.org/api_keys" } },
 ];
