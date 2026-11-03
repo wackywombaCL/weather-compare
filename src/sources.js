@@ -234,7 +234,7 @@ async function fetchNWS(loc, signal) {
   } catch {}
   if (!current && hourly.length) {
     const h0 = hourly.find(h => h.t <= Date.now() && Date.now() < h.t + 3600e3) || hourly[0];
-    current = { temp: h0.temp, feels: null, humidity: h0.humidity, wind: h0.wind, windDir: h0.windDir, cat: h0.cat, text: h0.text, night: h0.night, observedAt: Date.parse(fh.properties.updateTime || fh.properties.generatedAt) || Date.now(), kind: "forecast" };
+    current = { temp: h0.temp, feels: null, humidity: h0.humidity, wind: h0.wind, windDir: h0.windDir, cat: h0.cat, text: h0.text, night: h0.night, observedAt: Math.min(Date.now(), Math.max(h0.t, Date.parse(fh.properties.updateTime || fh.properties.generatedAt) || 0)), kind: "forecast" };
   }
   const city = p.relativeLocation?.properties;
   return { current, hourly, daily, place: city ? `${city.city}, ${city.state}` : null, stationsUrl: p.observationStations,
