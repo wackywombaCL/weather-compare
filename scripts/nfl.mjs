@@ -7,9 +7,24 @@ import path from "node:path";
 const URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
 const out = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "nfl.json");
 
-const r = await fetch(URL, { headers: { "User-Agent": "weather-compare/1.0", Accept: "application/json" } });
-if (!r.ok) { console.error("ESPN HTTP", r.status); process.exit(1); }
-const j = await r.json();
+async function get(url) {
+  const r = await fetch(url, { headers: { "User-Agent": "weather-compare/1.0", Accept: "application/json" } });
+  if (!r.ok) throw new Error("ESPN HTTP " + r.status);
+  return r.json();
+}
+let j = await get(URL);
+// ESPN keeps showing a finished week until midweek: once every game is over, show the next one.
+const done = ev => ev.length && ev.every(e => (e.competitions?.[0]?.status?.type?.state || e.status?.type?.state) === "post");
+if (done(j.events || []) && j.week?.number && j.season?.type) {
+  try {
+    const next = await get(`${URL}?seasontype=${j.season.type}&week=${j.week.number + 1}&dates=${j.season.year}`);
+    if ((next.events || []).length) j = next;
+    else if (j.season.type === 2) {          // regular season over: try the first playoff week
+      const po = await get(`${URL}?seasontype=3&week=1&dates=${j.season.year}`);
+      if ((po.events || []).length) j = po;
+    }
+  } catch (e) { console.log("next week fetch failed:", e.message); }
+}
 const games = (j.events || []).map(e => {
   const c = e.competitions?.[0] || {};
   const side = h => {

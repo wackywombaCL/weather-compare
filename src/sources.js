@@ -105,6 +105,7 @@ const WMO = {
   95: ["thunder", "Thunderstorm"], 96: ["thunder", "Thunderstorm, hail"], 99: ["thunder", "Thunderstorm, hail"],
 };
 const wmo = code => WMO[code] || ["cloudy", "—"];
+export const wmoInfo = code => wmo(code);
 function metSymbol(sym) {
   const base = (sym || "").replace(/_(day|night|polartwilight)$/, "");
   const night = /_night$/.test(sym || "");

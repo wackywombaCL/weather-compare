@@ -620,8 +620,8 @@ $("settings").addEventListener("close", () => {
 });
 
 // ---------- Tabs ----------
-const TABS = { forecast: ["tabForecast", "viewForecast"], accuracy: ["tabAccuracy", "viewAccuracy"], radar: ["tabRadar", "viewRadar"] };
-let radarMod = null;
+const TABS = { forecast: ["tabForecast", "viewForecast"], accuracy: ["tabAccuracy", "viewAccuracy"], radar: ["tabRadar", "viewRadar"], nfl: ["tabNFL", "viewNFL"] };
+let radarMod = null, nflMod = null;
 function showTab(name) {
   if (!TABS[name]) name = "forecast";
   for (const [k, [tab, view]] of Object.entries(TABS)) { $(tab).setAttribute("aria-selected", String(k === name)); $(view).hidden = k !== name; }
@@ -630,6 +630,7 @@ function showTab(name) {
   if (name === "accuracy") renderAccuracy();
   else if (name === "forecast") renderAll();
   if (name === "radar") (radarMod ||= import("./radar.js")).then(m => m.showRadar());
+  if (name === "nfl") (nflMod ||= import("./nfl.js")).then(m => m.showNFL());
   else radarMod?.then(m => m.hideRadar());
 }
 for (const k of Object.keys(TABS)) $(TABS[k][0]).addEventListener("click", () => showTab(k));
@@ -641,7 +642,7 @@ function setLocation(loc) {
   loadAll();
 }
 document.querySelectorAll(".preset").forEach(b => b.addEventListener("click", () => setLocation({ ...PRESETS[b.dataset.preset] })));
-$("refreshBtn").addEventListener("click", () => { loadAll(true); initAccuracy().then(renderAll); });
+$("refreshBtn").addEventListener("click", () => { loadAll(true); initAccuracy().then(renderAll); if (!$("viewNFL").hidden) nflMod?.then(m => m.showNFL(true)); });
 $("unitBtn").addEventListener("click", () => { state.units = state.units === "F" ? "C" : "F"; store.set("wc.units", state.units); renderAll(); renderAccuracy(); });
 document.querySelectorAll("#avgMode button").forEach(b => b.addEventListener("click", () => { state.avgMode = b.dataset.mode; store.set("wc.avgMode", state.avgMode); renderAll(); }));
 $("geoBtn").addEventListener("click", () => {

@@ -338,3 +338,49 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .tablebox thead tr:last-child th { box-shadow: inset 0 -1px 0 var(--border); }
 .hourly .dayrow th { height: 26px; padding-top: 8px; }
 .hourly .daylbl { position: sticky; left: calc(var(--namecol, 120px) + 8px); display: inline-block; }
+
+/* NFL tab */
+.tabs { overflow-x: auto; }
+.nflhead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
+.nflhead h2 { font-size: 16px; margin: 0; }
+.watch { margin-bottom: 14px; }
+.watch h3, .covered h3 { font-size: 14px; margin: 0 0 6px; }
+.watch ul, .covered ul { margin: 0; padding-left: 18px; font-size: 14px; }
+.watch li { margin: 5px 0; }
+.watch a { font-weight: 700; }
+.watch.ok { font-size: 14px; }
+.games { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 470px), 1fr)); gap: 12px; }
+.game { background: var(--surface); border: 1px solid var(--border); border-left: 5px solid var(--border); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); }
+.game.lvl-sig { border-left-color: var(--critical); }
+.game.lvl-note { border-left-color: var(--warning); }
+.game.lvl-ok { border-left-color: var(--good); }
+.game .gm { font-size: 15px; }
+.game .gsub { font-size: 12px; color: var(--text-2); }
+.live { background: var(--critical); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
+.fin { background: var(--surface-2); font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
+.flags { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.flag { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); }
+.flag.sig { background: color-mix(in srgb, var(--critical) 22%, var(--surface)); }
+.flag.note { background: color-mix(in srgb, var(--warning) 28%, var(--surface)); }
+.flag.ok { background: color-mix(in srgb, var(--good) 18%, var(--surface)); }
+.gtable { width: 100%; }
+.gtable th { font-size: 12px; color: var(--text-2); padding: 4px 4px; }
+.gtable th .slot { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
+.gtable { table-layout: fixed; }
+.gtable td { padding: 6px 2px; vertical-align: top; }
+.gtable .nd { display: block; font-size: 11px; color: var(--text-3); font-weight: 400; }
+.gtable .ni { font-size: 22px; line-height: 1.2; }
+.gtable .nt { font-weight: 700; }
+.gtable .nf { font-weight: 400; color: var(--text-3); font-size: 11px; display: block; }
+.gtable .nw, .gtable .np { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.gtable .ng { color: var(--text-3); }
+.gtable .hot { color: var(--text); font-weight: 700; }
+.covered { margin-top: 14px; }
+.covered li { margin: 3px 0; color: var(--text-2); }
+@media (max-width: 480px) {
+  .game { padding: 10px; }
+  .gtable th { font-size: 11px; padding: 3px 1px; }
+  .gtable .ni { font-size: 19px; }
+  .gtable .nw, .gtable .np { font-size: 11px; }
+  .gtable .nf { font-size: 10px; }
+}

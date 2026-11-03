@@ -42,6 +42,7 @@
     <button class="tab" role="tab" id="tabForecast" aria-controls="viewForecast" aria-selected="true">Forecast</button>
     <button class="tab" role="tab" id="tabAccuracy" aria-controls="viewAccuracy" aria-selected="false">Accuracy</button>
     <button class="tab" role="tab" id="tabRadar" aria-controls="viewRadar" aria-selected="false">Radar</button>
+    <button class="tab" role="tab" id="tabNFL" aria-controls="viewNFL" aria-selected="false">NFL</button>
   </nav>
 
   <!-- ================= FORECAST ================= -->
@@ -162,9 +163,14 @@
     <p class="hint">Radar: NEXRAD composite from the Iowa Environmental Mesonet, updated every 5 minutes. Lightning: NOAA's GOES-West satellite lightning mapper, checked every 5 minutes (it can run a few minutes behind). A phone alert goes out when lightning is within 20 miles, and for any National Weather Service alert for Vallejo or Napa.</p>
   </div>
 
+  <!-- ================= NFL ================= -->
+  <div class="view" id="viewNFL" role="tabpanel" aria-labelledby="tabNFL" hidden>
+    <div id="nflBody"><p class="empty">Loading…</p></div>
+  </div>
+
   <footer>
     Data: National Weather Service (api.weather.gov), Open-Meteo (open-meteo.com, CC BY 4.0),
-    MET Norway (api.met.no, CC BY 4.0), Pirate Weather (pirateweather.net), Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap; ECMWF, GFS, ICON and GEM model data via Open-Meteo. Radar: NEXRAD via Iowa Environmental Mesonet. Lightning: NOAA GOES-18 GLM. Maps: Leaflet, &copy; OpenStreetMap contributors. Place search by Open-Meteo Geocoding.
+    MET Norway (api.met.no, CC BY 4.0), Pirate Weather (pirateweather.net), Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap; ECMWF, GFS, ICON and GEM model data via Open-Meteo. Radar: NEXRAD via Iowa Environmental Mesonet. Lightning: NOAA GOES-18 GLM. NFL schedule: ESPN. Maps: Leaflet, &copy; OpenStreetMap contributors. Place search by Open-Meteo Geocoding.
   </footer>
 </div>
 <dialog class="settings" id="settings" aria-labelledby="settingsTitle">
