@@ -225,7 +225,9 @@ async function fetchNWS(loc, signal) {
         current = {
           temp: cToF(ob.temperature.value), feels: cToF(feelsC), humidity: ob.relativeHumidity?.value,
           wind: isNum(kmh) ? kmh / 1.609 : null, windDir: ob.windDirection?.value,
-          cat: catFromText(ob.textDescription), text: ob.textDescription || "—",
+          // Some reports have no description: borrow the current hour's forecast wording then.
+          ...(ob.textDescription ? { cat: catFromText(ob.textDescription), text: ob.textDescription }
+            : (() => { const hh = hourly.find(h => h.t <= Date.now() && Date.now() < h.t + 3600e3) || hourly[0]; return { cat: hh?.cat || "partly", text: hh?.text || "—" }; })()),
           night: hourly[0]?.night ?? false, observedAt: ts, kind: "observed",
           station: st.features[0].properties?.name,
         };
@@ -454,7 +456,7 @@ export const SOURCES = [
   { id: "weatherapi", name: "WeatherAPI.com",          short: "WeatherAPI", site: "https://www.weatherapi.com", color: "var(--s6)", fetch: fetchWeatherAPI,
     key: { env: "WEATHERAPI_KEY", signup: "https://www.weatherapi.com/my/" } },
   { id: "visualcrossing", name: "Visual Crossing",     short: "VisualX",    site: "https://www.visualcrossing.com", color: "var(--s7)", fetch: fetchVisualCrossing,
-    key: { env: "VISUALCROSSING_KEY", signup: "https://www.visualcrossing.com/account" }, cacheMin: 30 },
+    key: { env: "VISUALCROSSING_KEY", signup: "https://www.visualcrossing.com/account" } },
   { id: "owm",       name: "OpenWeatherMap",           short: "OpenWeather", site: "https://openweathermap.org", color: "var(--s8)", fetch: fetchOWM,
     key: { env: "OWM_KEY", signup: "https://home.openweathermap.org/api_keys" } },
 ];
