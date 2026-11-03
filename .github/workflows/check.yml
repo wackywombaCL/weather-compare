@@ -22,3 +22,4 @@ jobs:
           WEATHERAPI_KEY: ${{ secrets.WEATHERAPI_KEY }}
           VISUALCROSSING_KEY: ${{ secrets.VISUALCROSSING_KEY }}
           OWM_KEY: ${{ secrets.OWM_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}

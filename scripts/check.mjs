@@ -38,4 +38,11 @@ for (const l of [PRESETS.vallejo, PRESETS.napa]) {
     } catch (e) { console.log(`  ${st.id} ${st.name || ""} (${st.mi ?? "?"} mi): no data (${e.message})`); }
   }
 }
+// Test phone notification (only if the NTFY_TOPIC secret is set)
+if (process.env.NTFY_TOPIC) {
+  try {
+    const r = await fetch(`https://ntfy.sh/${encodeURIComponent(process.env.NTFY_TOPIC)}`, { method: "POST", body: `Test from Weather Compare: notifications are working. ${SOURCES.length - failed} of ${SOURCES.length} sources OK.`, headers: { Title: "Weather Compare test", Tags: "white_check_mark", Click: "https://wackywombacl.github.io/weather-compare/" } });
+    console.log(`\nTest notification: ${r.ok ? "sent" : "HTTP " + r.status}`);
+  } catch (e) { console.log(`\nTest notification failed: ${e.message}`); }
+} else console.log("\nNo NTFY_TOPIC secret: skipping test notification");
 if (failed) process.exitCode = 1;
