@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Weather Compare</title>
+<meta name="description" content="Side-by-side forecasts from multiple weather providers, a blended average, and a running accuracy scoreboard.">
+<meta name="theme-color" content="#111110" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Weather">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Weather Compare</h1>
+      <div class="loc" id="locLabel">Loading…</div>
+    </div>
+    <div class="controls">
+      <button class="btn preset" data-preset="vallejo">Vallejo</button>
+      <button class="btn preset" data-preset="napa">Napa</button>
+      <button class="btn" id="geoBtn" title="Use my location">📍 Me</button>
+      <button class="btn" id="unitBtn" title="Switch units">°F</button>
+      <button class="btn" id="refreshBtn" title="Refresh">↻</button>
+    </div>
+    <div class="search">
+      <label class="sr" for="q">Search for a city</label>
+      <input id="q" type="search" placeholder="Search a city…" autocomplete="off">
+      <ul class="suggest" id="suggest" hidden></ul>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tabForecast" aria-controls="viewForecast" aria-selected="true">Forecast</button>
+    <button class="tab" role="tab" id="tabAccuracy" aria-controls="viewAccuracy" aria-selected="false">Accuracy</button>
+  </nav>
+
+  <!-- ================= FORECAST ================= -->
+  <div class="view" id="viewForecast" role="tabpanel" aria-labelledby="tabForecast">
+    <p class="status-line" id="statusLine"></p>
+
+    <section id="secNow" style="margin-top:0">
+      <h2>Right now, side by side</h2>
+      <p class="hint">Current conditions as each source reports them.</p>
+      <div class="cards" id="cards"></div>
+      <div class="pending" id="pending"></div>
+    </section>
+
+    <section id="secAvg">
+      <h2>The average of everyone</h2>
+      <p class="hint">Just for fun: every available source averaged together. The shaded band shows the range between the lowest and highest source.</p>
+      <div class="avg-grid">
+        <div class="panel avg-now" id="avgNow"></div>
+        <div class="panel">
+          <div class="legend" id="avgLegend"></div>
+          <div class="chart" id="avgChart"></div>
+        </div>
+      </div>
+      <div class="days" id="avgDays"></div>
+    </section>
+
+    <section id="secDaily">
+      <h2>5-day forecast by source</h2>
+      <p class="hint">High / low, conditions, and chance of precipitation.</p>
+      <div class="panel scroll"><table id="dailyTable"></table></div>
+    </section>
+
+    <section id="secHourly">
+      <h2>Next 30 hours by source</h2>
+      <p class="hint">Hover or tap the chart for exact values. The table scrolls sideways.</p>
+      <div class="panel">
+        <div class="legend" id="hourLegend"></div>
+        <div class="chart" id="hourChart"></div>
+      </div>
+      <div class="panel scroll" style="margin-top:12px"><table class="hourly" id="hourlyTable"></table></div>
+    </section>
+  </div>
+
+  <!-- ================= ACCURACY ================= -->
+  <div class="view" id="viewAccuracy" role="tabpanel" aria-labelledby="tabAccuracy" hidden>
+    <div class="acc-controls">
+      <div class="seg" id="accLoc" role="group" aria-label="Location">
+        <button data-loc="vallejo">Vallejo</button><button data-loc="napa">Napa</button><button data-loc="both">Both</button>
+      </div>
+      <span class="sub2" id="accUpdated"></span>
+    </div>
+
+    <section style="margin-top:0">
+      <h2>Today's locked-in forecast</h2>
+      <p class="hint">Set at 6am Pacific for the next 24 hours (6am to 6am). It gets scored tomorrow morning against real station observations.</p>
+      <div id="accToday"></div>
+    </section>
+
+    <section>
+      <h2>Last 3 days</h2>
+      <p class="hint">Each source's 6am forecast compared with what actually happened. A miss of “+2°” means the forecast was 2° too warm.</p>
+      <div id="accRecent"></div>
+    </section>
+
+    <section>
+      <h2>Long-term scoreboard</h2>
+      <div class="acc-controls">
+        <label for="accPeriod" class="sub2" style="font-size:13px">Period</label>
+        <select id="accPeriod"></select>
+      </div>
+      <div class="panel scroll"><table class="acc" id="accOverall"></table></div>
+      <div class="grid2" style="margin-top:12px">
+        <div><h3 style="font-size:14px;margin:0 0 6px">By season</h3><div class="panel scroll"><table class="acc" id="accSeason"></table></div></div>
+        <div><h3 style="font-size:14px;margin:0 0 6px">Wet vs. dry season</h3><div class="panel scroll"><table class="acc" id="accWetDry"></table></div></div>
+      </div>
+      <details class="how">
+        <summary>How scoring works</summary>
+        <ul>
+          <li><b>Window:</b> each forecast is saved at 6am Pacific and covers 6am to 6am the next day. Observations come from the nearest National Weather Service station (Napa County Airport for Napa; the nearest reporting station for Vallejo, which has none of its own).</li>
+          <li><b>High / low miss:</b> forecast highest and lowest hourly temperature in the window minus the observed highest and lowest.</li>
+          <li><b>Hourly miss:</b> the average gap between the forecast and observed temperature, hour by hour, across the 24 hours.</li>
+          <li><b>Rain:</b> a source “calls rain” when any hour shows rain, storms or snow, or a 50%+ chance. Observed rain is any station report of rain, drizzle, showers or storms. Hit = called and it rained; Miss = it rained without a call; False alarm = called but stayed dry.</li>
+          <li><b>Rain timing:</b> for hits, forecast start hour minus actual start. “+2h” means the forecast had it starting 2 hours later than it did.</li>
+          <li><b>Rain skill (Brier):</b> compares the highest rain chance with what happened. 0 is perfect, lower is better.</li>
+          <li><b>Score (0–100):</b> 70% temperature (100 minus 10 points per degree of average miss across high, low and hourly) and 30% rain (100 × (1 − Brier), or 100/0 for a right/wrong call when a source gives no rain chances). Just a handy single number for ranking.</li>
+          <li><b>Seasons:</b> meteorological (Winter Dec–Feb, Spring Mar–May, Summer Jun–Aug, Fall Sep–Nov) and Bay Area wet (Nov–Apr) vs. dry (May–Oct).</li>
+        </ul>
+      </details>
+    </section>
+  </div>
+
+  <footer>
+    Data: National Weather Service (api.weather.gov), Open-Meteo (open-meteo.com, CC BY 4.0),
+    MET Norway (api.met.no, CC BY 4.0). Place search by Open-Meteo Geocoding.
+  </footer>
+</div>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
