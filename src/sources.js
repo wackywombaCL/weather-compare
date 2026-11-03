@@ -9,11 +9,21 @@ export const PRESETS = {
 };
 
 // Sources still to be added once API keys are in hand.
-export const PENDING_SOURCES = ["OpenWeatherMap", "WeatherAPI.com", "Tomorrow.io", "Visual Crossing", "AccuWeather", "Weatherbit", "Pirate Weather"];
+export const PENDING_SOURCES = ["OpenWeatherMap", "WeatherAPI.com", "Tomorrow.io", "Visual Crossing", "Weatherbit"];
 
 // ---------- Request options (the Node job sets a User-Agent; browsers can't) ----------
 let requestInit = {};
 export function setRequestInit(init) { requestInit = init || {}; }
+
+// ---------- API keys ----------
+// The page reads keys saved on the device (Settings); the daily job reads GitHub secrets.
+let keyProvider = () => null;
+export function setKeyProvider(fn) { keyProvider = fn; }
+const needKey = id => {
+  const k = (keyProvider(id) || "").trim();
+  if (!k) throw Object.assign(new Error("Needs an API key"), { friendly: true, nokey: true });
+  return k;
+};
 
 export async function getJSON(url, { signal, tries = 2 } = {}) {
   let lastErr;
@@ -256,8 +266,49 @@ async function fetchMetNo(loc, signal) {
   return { current, hourly, daily, note: "ECMWF-based model" };
 }
 
+async function fetchPirate(loc, signal) {
+  const key = needKey("pirate");
+  const j = await getJSON(`https://api.pirateweather.net/forecast/${encodeURIComponent(key)}/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}?units=us&extend=hourly&exclude=minutely,alerts`, { signal });
+  const tz = loc.tz || j.timezone;
+  const conv = x => {
+    const ic = x.icon || "", sm = x.summary || "";
+    let cat;
+    if (/thunder/.test(ic)) cat = "thunder";
+    else if (ic === "hail" || ic === "sleet") cat = "sleet";
+    else if (ic === "snow") cat = "snow";
+    else if (ic === "rain") cat = /drizzle|light rain|possible/i.test(sm) ? "drizzle" : "rain";
+    else if (ic === "fog") cat = "fog";
+    else if (ic === "cloudy") cat = "cloudy";
+    else if (/^partly-cloudy/.test(ic)) cat = "partly";
+    else if (/^clear/.test(ic)) cat = "clear";
+    else cat = catFromText(sm);
+    return { cat, night: /night/.test(ic), text: sm || catLabel(cat) };
+  };
+  const c = j.currently, cc = conv(c);
+  const current = {
+    temp: c.temperature, feels: c.apparentTemperature, humidity: isNum(c.humidity) ? c.humidity * 100 : null,
+    wind: c.windSpeed, windDir: c.windBearing, cat: cc.cat, text: cc.text, night: cc.night,
+    observedAt: c.time * 1000, kind: "model",
+  };
+  const hourly = (j.hourly?.data || []).map(h => {
+    const v = conv(h);
+    return { t: h.time * 1000, temp: h.temperature, pop: isNum(h.precipProbability) ? h.precipProbability * 100 : null, cat: v.cat, text: v.text, night: v.night, wind: h.windSpeed };
+  });
+  const daily = {};
+  for (const d of j.daily?.data || []) {
+    const v = conv(d);
+    daily[dayKey(d.time * 1000 + 12 * 3600e3, tz)] = {
+      hi: d.temperatureMax ?? d.temperatureHigh, lo: d.temperatureMin ?? d.temperatureLow,
+      pop: isNum(d.precipProbability) ? d.precipProbability * 100 : null, cat: v.cat, text: v.text,
+    };
+  }
+  return { current, hourly, daily, note: "NOAA models (HRRR, NBM, GFS)" };
+}
+
 export const SOURCES = [
   { id: "nws",       name: "National Weather Service", short: "NWS",        site: "https://www.weather.gov", color: "var(--s1)", fetch: fetchNWS },
   { id: "openmeteo", name: "Open-Meteo",               short: "Open-Meteo", site: "https://open-meteo.com",  color: "var(--s2)", fetch: fetchOpenMeteo },
   { id: "metno",     name: "MET Norway (Yr)",          short: "Yr",         site: "https://www.yr.no",       color: "var(--s3)", fetch: fetchMetNo },
+  { id: "pirate",    name: "Pirate Weather",           short: "Pirate",     site: "https://pirateweather.net", color: "var(--s4)", fetch: fetchPirate,
+    key: { env: "PIRATE_KEY", signup: "https://pirate-weather.apiable.io" } },
 ];

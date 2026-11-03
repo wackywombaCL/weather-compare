@@ -11,7 +11,7 @@
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
-import { SOURCES, PRESETS, WET, setRequestInit, getJSON, dayKey, localHour, localHourStart, isNum, mean, cToF } from "../src/sources.js";
+import { SOURCES, PRESETS, WET, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, cToF } from "../src/sources.js";
 
 export const TZ = "America/Los_Angeles";
 export const SET_HOUR = 6;
@@ -43,6 +43,7 @@ export async function setForecast(dateKey, now, log) {
   for (const loc of LOCATIONS) {
     const L = (out.locations[loc.id] = { name: loc.name, lat: loc.lat, lon: loc.lon, sources: {} });
     await Promise.all(SOURCES.map(async s => {
+      if (s.key && !process.env[s.key.env]) return; // no key saved yet: not tracked
       try {
         const d = await s.fetch(loc);
         const hours = d.hourly.filter(h => h.t >= from && h.t < win.end)
@@ -64,7 +65,7 @@ export async function setForecast(dateKey, now, log) {
         L.sources[s.id] = { ok: false, error: String(e.message || e) };
       }
     }));
-    log(`  ${loc.id}: ` + SOURCES.map(s => `${s.id}=${L.sources[s.id].ok ? `${L.sources[s.id].hi}/${L.sources[s.id].lo}` : "x"}`).join(" "));
+    log(`  ${loc.id}: ` + SOURCES.filter(s => L.sources[s.id]).map(s => `${s.id}=${L.sources[s.id].ok ? `${L.sources[s.id].hi}/${L.sources[s.id].lo}` : "x"}`).join(" "));
   }
   return out;
 }
@@ -221,6 +222,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   const repo = process.env.GITHUB_REPOSITORY || "personal";
   // NWS and MET Norway both ask automated clients to identify themselves.
+  setKeyProvider(id => { const s = SOURCES.find(x => x.id === id); return s?.key ? process.env[s.key.env] : null; });
   setRequestInit({ headers: { "User-Agent": `weather-compare/1.0 (github.com/${repo})`, Accept: "application/geo+json, application/json" } });
   const dataDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
   run({ dataDir, force: process.env.FORCE === "true" }).catch(e => { console.error(e); process.exit(1); });

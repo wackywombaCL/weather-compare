@@ -35,6 +35,13 @@ jobs:
         run: node scripts/daily.mjs
         env:
           FORCE: ${{ inputs.force }}
+          # API keys live in Settings > Secrets and variables > Actions (missing ones are skipped)
+          PIRATE_KEY: ${{ secrets.PIRATE_KEY }}
+          TOMORROW_KEY: ${{ secrets.TOMORROW_KEY }}
+          WEATHERAPI_KEY: ${{ secrets.WEATHERAPI_KEY }}
+          VISUALCROSSING_KEY: ${{ secrets.VISUALCROSSING_KEY }}
+          OWM_KEY: ${{ secrets.OWM_KEY }}
+          WEATHERBIT_KEY: ${{ secrets.WEATHERBIT_KEY }}
       - name: Commit data
         run: |
           git config user.name "github-actions[bot]"

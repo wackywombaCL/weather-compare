@@ -29,6 +29,7 @@
       <button class="btn" id="geoBtn" title="Use my location">📍 Me</button>
       <button class="btn" id="unitBtn" title="Switch units">°F</button>
       <button class="btn" id="refreshBtn" title="Refresh">↻</button>
+      <button class="btn" id="settingsBtn" title="Settings: API keys">⚙️</button>
     </div>
     <div class="search">
       <label class="sr" for="q">Search for a city</label>
@@ -133,9 +134,20 @@
 
   <footer>
     Data: National Weather Service (api.weather.gov), Open-Meteo (open-meteo.com, CC BY 4.0),
-    MET Norway (api.met.no, CC BY 4.0). Place search by Open-Meteo Geocoding.
+    MET Norway (api.met.no, CC BY 4.0), Pirate Weather (pirateweather.net). Place search by Open-Meteo Geocoding.
   </footer>
 </div>
+<dialog class="settings" id="settings" aria-labelledby="settingsTitle">
+  <form method="dialog" id="settingsForm">
+    <h2 id="settingsTitle">API keys</h2>
+    <p class="hint" style="margin:0">Keys are saved only in this browser on this device. They are never added to the website or GitHub. (The 6am tracking job uses the copies in your GitHub secrets.)</p>
+    <div id="keyRows"></div>
+    <div class="actions">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn" value="save" id="saveKeys" aria-pressed="true">Save</button>
+    </div>
+  </form>
+</dialog>
 <script type="module" src="src/app.js"></script>
 </body>
 </html>

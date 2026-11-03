@@ -11,6 +11,7 @@
   --s1: #2a78d6;  /* NWS */
   --s2: #eb6834;  /* Open-Meteo */
   --s3: #1baf7a;  /* MET Norway */
+  --s4: #eda100;  /* Pirate Weather */
   --avg: #0b0b0b;
   --band: rgba(11,11,11,.10);
   --warn: #b25b00;
@@ -21,7 +22,7 @@
     color-scheme: dark;
     --bg: #111110; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
     --text: #f0efec; --text-2: #c3c2b7; --text-3: #8f8e86; --accent: #3987e5;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --avg: #f0efec; --band: rgba(240,239,236,.12);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --avg: #f0efec; --band: rgba(240,239,236,.12);
     --warn: #f0a24a; --shadow: none;
   }
 }
@@ -29,7 +30,7 @@
   color-scheme: dark;
   --bg: #111110; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
   --text: #f0efec; --text-2: #c3c2b7; --text-3: #8f8e86; --accent: #3987e5;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --avg: #f0efec; --band: rgba(240,239,236,.12);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --avg: #f0efec; --band: rgba(240,239,236,.12);
   --warn: #f0a24a; --shadow: none;
 }
 * { box-sizing: border-box; }
@@ -180,3 +181,14 @@ details.how li { margin: 3px 0; }
 .sub2 { color: var(--text-3); font-size: 12px; font-weight: 400; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* Settings dialog */
+dialog.settings { border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text); padding: 18px; width: min(460px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+dialog.settings::backdrop { background: rgba(0,0,0,.4); }
+dialog.settings h2 { font-size: 17px; margin: 0 0 4px; }
+dialog.settings .keyrow { margin-top: 14px; }
+dialog.settings label { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
+dialog.settings label a { font-weight: 400; font-size: 12px; color: var(--accent); }
+dialog.settings input { width: 100%; margin-top: 4px; border: 1px solid var(--border); background: var(--bg); border-radius: 10px; padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+dialog.settings .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.card .addkey { margin-top: 6px; }

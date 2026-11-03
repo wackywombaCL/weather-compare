@@ -1,4 +1,4 @@
-import { PRESETS, PENDING_SOURCES, SOURCES, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
+import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
 import { initAccuracy, renderAccuracy } from "./accuracy.js";
 
 const HOURS = 30;
@@ -19,6 +19,10 @@ export const state = {
   fetchedAt: null,
   run: 0,
 };
+
+// API keys entered in Settings, stored only on this device.
+const getKeys = () => store.get("wc.keys", {});
+setKeyProvider(id => getKeys()[id]);
 
 // ---------- Formatting ----------
 export const $ = id => document.getElementById(id);
@@ -71,7 +75,7 @@ async function loadAll() {
     } catch (e) {
       if (run !== state.run || e.name === "AbortError") return;
       console.warn(s.id, e);
-      state.results[s.id] = { status: "error", error: e.friendly ? e.message : "Couldn't load (" + (e.message || "network error") + ")" };
+      state.results[s.id] = { status: e.nokey ? "nokey" : "error", error: e.friendly ? e.message : "Couldn't load (" + (e.message || "network error") + ")" };
     }
     renderAll();
   }));
@@ -98,7 +102,8 @@ function renderHeader() {
 
 function renderStatus() {
   const n = okSources().length, loading = SOURCES.filter(s => state.results[s.id]?.status === "loading").length;
-  const parts = [loading ? `Loading ${loading} source${loading > 1 ? "s" : ""}…` : `${n} of ${SOURCES.length} sources loaded`];
+  const active = SOURCES.filter(s => state.results[s.id]?.status !== "nokey").length;
+  const parts = [loading ? `Loading ${loading} source${loading > 1 ? "s" : ""}…` : `${n} of ${active} sources loaded`];
   if (state.fetchedAt) parts.push("Updated " + fmtTime(state.fetchedAt, Intl.DateTimeFormat().resolvedOptions().timeZone));
   $("statusLine").innerHTML = parts.map(p => `<span>${esc(p)}</span>`).join("");
 }
@@ -110,6 +115,7 @@ function renderCards() {
     const r = state.results[s.id] || { status: "loading" };
     const head = `<div class="src"><a href="${esc(s.site)}" target="_blank" rel="noopener">${esc(s.name)}</a>${r.status === "ok" ? `<span class="ago">${esc(ago(r.data.current.observedAt))}</span>` : ""}</div>`;
     if (r.status === "loading") return `<div class="card loading" style="--c:${s.color}">${head}<div class="big"><span class="t">··</span></div><div class="cond">Loading…</div></div>`;
+    if (r.status === "nokey") return `<div class="card err" style="--c:${s.color}">${head}<div class="big"><span class="t">—</span></div><div class="cond">Needs an API key on this device.</div><button class="btn addkey" data-open-settings>⚙️ Add key</button></div>`;
     if (r.status === "error") return `<div class="card err" style="--c:${s.color}">${head}<div class="big"><span class="t">—</span></div><div class="cond">${esc(r.error)}</div></div>`;
     const c = r.data.current, d = r.data.daily[today];
     return `<div class="card" style="--c:${s.color}">${head}
@@ -123,6 +129,7 @@ function renderCards() {
         <dt>Source</dt><dd>${esc(r.data.note)}</dd>
       </dl></div>`;
   }).join("");
+  $("cards").querySelectorAll("[data-open-settings]").forEach(b => b.addEventListener("click", openSettings));
   $("pending").innerHTML = "Coming once you add API keys: " + PENDING_SOURCES.map(n => `<span class="chip">${esc(n)}</span>`).join("");
 }
 
@@ -182,7 +189,7 @@ function renderDaily() {
     const r = state.results[s.id];
     html += `<tr><th style="--c:${s.color}"><span class="sw"></span>${esc(s.short)}</th>`;
     if (r?.status !== "ok") {
-      html += `<td colspan="${DAYS}" class="cell na">${r?.status === "error" ? esc(r.error) : "Loading…"}</td></tr>`;
+      html += `<td colspan="${DAYS}" class="cell na">${r?.error ? esc(r.error) : "Loading…"}</td></tr>`;
       continue;
     }
     for (const d of days) {
@@ -233,7 +240,7 @@ function renderHourly() {
   for (const s of SOURCES) {
     const r = state.results[s.id];
     body += `<tr><th style="--c:${s.color}"><span class="sw"></span>${esc(s.short)}</th>`;
-    if (r?.status !== "ok") { body += `<td colspan="${HOURS}" class="cell na" style="text-align:left">${r?.status === "error" ? esc(r.error) : "Loading…"}</td></tr>`; continue; }
+    if (r?.status !== "ok") { body += `<td colspan="${HOURS}" class="cell na" style="text-align:left">${r?.error ? esc(r.error) : "Loading…"}</td></tr>`; continue; }
     const m = new Map(r.data.hourly.map(h => [h.t, h]));
     body += grid.map((t, i) => {
       const h = m.get(t);
@@ -311,6 +318,29 @@ let rsz;
 window.addEventListener("resize", () => {
   clearTimeout(rsz);
   rsz = setTimeout(() => ["avgChart", "hourChart"].forEach(id => { const el = $(id); if (el._args) lineChart(el, ...el._args); }), 150);
+});
+
+// ---------- Settings (API keys) ----------
+function openSettings() {
+  const keys = getKeys();
+  $("keyRows").innerHTML = SOURCES.filter(s => s.key).map(s => `
+    <div class="keyrow">
+      <label for="key_${s.id}">${esc(s.name)} <a href="${esc(s.key.signup)}" target="_blank" rel="noopener">Get a key ↗</a></label>
+      <input id="key_${s.id}" data-id="${s.id}" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key" value="${esc(keys[s.id] || "")}">
+    </div>`).join("") + `<p class="hint" style="margin-top:14px">More sources (${esc(PENDING_SOURCES.join(", "))}) will appear here as they're added.</p>`;
+  $("keyRows").querySelectorAll("input").forEach(i => {
+    i.addEventListener("focus", () => i.type = "text");
+    i.addEventListener("blur", () => i.type = "password");
+  });
+  $("settings").showModal();
+}
+$("settingsBtn").addEventListener("click", openSettings);
+$("settings").addEventListener("close", () => {
+  if ($("settings").returnValue !== "save") return;
+  const keys = getKeys();
+  $("keyRows").querySelectorAll("input").forEach(i => { const v = i.value.trim(); if (v) keys[i.dataset.id] = v; else delete keys[i.dataset.id]; });
+  store.set("wc.keys", keys);
+  loadAll();
 });
 
 // ---------- Tabs ----------
