@@ -47,7 +47,11 @@
   <div class="view" id="viewForecast" role="tabpanel" aria-labelledby="tabForecast">
     <p class="status-line" id="statusLine"></p>
 
-    <section id="secNow" style="margin-top:0">
+    <section id="secBest" style="margin-top:0">
+      <div class="panel best" id="best"></div>
+    </section>
+
+    <section id="secNow">
       <h2>Right now, side by side</h2>
       <p class="hint">Current conditions as each source reports them.</p>
       <div class="cards" id="cards"></div>
@@ -135,6 +139,7 @@
           <li><b>Score (0–100):</b> 70% temperature (100 minus 10 points per degree of average miss across high, low and hourly) and 30% rain (100 × (1 − Brier), or 100/0 for a right/wrong call when a source gives no rain chances). Just a handy single number for ranking.</li>
           <li><b>Smart average:</b> a blend where each source's weight depends on its score over the previous 14 scored days (the best gets full weight; every 8 points behind it cuts the weight by about two-thirds). It needs 3+ scored days per source, and until then equals the plain average.</li>
           <li><b>Recent accuracy shading</b> (Forecast tab): each source's average score over its last 7 scored days. Green 88+ (Great), yellow 80+ (Good), orange 70+ (Fair), red under 70 (Poor).</li>
+          <li><b>Best forecast</b> (top of the Forecast tab): each part of the forecast is blended from the sources that have been most accurate at that part over the last 14 scored days: high, low, hourly temperatures, rain chance (Brier), rain start time, rain amount and wind. The leader counts most; others fade out the further behind they are. Days 2+ use each source's accuracy at that range (1 and 2 days ahead). It's also scored here as its own row.</li>
           <li><b>Seasons:</b> meteorological (Winter Dec–Feb, Spring Mar–May, Summer Jun–Aug, Fall Sep–Nov) and Bay Area wet (Nov–Apr) vs. dry (May–Oct).</li>
         </ul>
       </details>

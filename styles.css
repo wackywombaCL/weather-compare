@@ -274,3 +274,34 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 
 .cell .cq { font-size: 11px; color: var(--rain); display: block; font-weight: 600; }
 .hourly td .cq { min-height: 13px; }
+
+/* Best forecast */
+.best { padding: 16px; }
+.best-wait { color: var(--text-2); font-size: 14px; }
+.best-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 720px) { .best-hero { grid-template-columns: 1fr; } }
+.best-kicker { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.best-temps { display: flex; align-items: baseline; gap: 12px; }
+.best-temps .i { font-size: 40px; align-self: center; }
+.best-temps .hi { font-size: 52px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.best-temps .lo { font-size: 30px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.best .cond { margin: 2px 0 10px; }
+.best-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.bpill { background: var(--surface-2); border-radius: 999px; padding: 5px 11px; font-size: 13px; font-weight: 600; }
+.conf { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); }
+.conf-high { background: color-mix(in srgb, var(--good) 20%, var(--surface)); }
+.conf-medium { background: color-mix(in srgb, var(--warning) 26%, var(--surface)); }
+.conf-low { background: color-mix(in srgb, var(--serious) 24%, var(--surface)); }
+.best-from ul { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.best-from li { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) auto; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.best-from li:last-child { border-bottom: 0; }
+.best-from .bel { color: var(--text-2); }
+.best-from .bsrc { font-weight: 600; }
+.best-from .berr { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.best-from .bmore { display: block; color: var(--text-3); font-size: 12px; }
+.best-days { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.bday { background: var(--surface-2); border-radius: 12px; padding: 8px 6px; text-align: center; min-width: 0; }
+.bday .dn { font-weight: 600; font-size: 13px; } .bday .di { font-size: 24px; }
+.bday .hl { font-variant-numeric: tabular-nums; } .bday .hl .lo { color: var(--text-3); }
+.bday .pp, .bday .rs { font-size: 12px; color: var(--text-2); }
+.bday .conf { display: inline-block; margin-top: 3px; font-size: 11px; }

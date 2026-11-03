@@ -1,5 +1,5 @@
 import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
-import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT } from "./skill.js";
+import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS } from "./skill.js";
 import { initAccuracy, renderAccuracy, accData } from "./accuracy.js";
 
 const HOURS = 30;
@@ -169,6 +169,7 @@ const okSources = () => orderedSources().filter(s => state.results[s.id]?.status
 export function renderAll() {
   renderHeader();
   renderStatus();
+  renderBest();
   renderCards();
   renderAverage();
   renderDaily();
@@ -276,6 +277,82 @@ function renderAverage() {
   $("avgLegend").innerHTML = `<span><span class="sw" style="background:var(--avg)"></span>${label}</span>` + (ok.length > 1 ? `<span><span class="sw band"></span>Lowest–highest source</span>` : "") + `<span><span class="sw bar"></span>Rain chance</span>`;
   lineChart($("avgChart"), grid, ser, { tz, bars: pop, amounts: qpfs });
 }
+
+// ---------- Best forecast: each element from the sources that have been best at it lately ----------
+const fmtErr = (el, e) => !isNum(e) ? "—" : ({ deg: A(e), brier: e.toFixed(2), hours: "±" + e.toFixed(1) + "h", inches: R(e), mph: (state.units === "F" ? e.toFixed(1) + " mph" : (e * 1.609).toFixed(1) + " km/h") })[ELEMENTS[el].fmt];
+const ERR_WORD = { deg: "avg miss", brier: "score (0 = perfect)", hours: "avg timing miss", inches: "avg amount miss", mph: "avg miss" };
+function wstd(pairs, w) {
+  const v = pairs.filter(([id, x]) => isNum(x) && (!w || w[id]));
+  if (v.length < 2) return null;
+  const m = wmean(v, w);
+  const ws = v.map(([id]) => w ? w[id] : 1), tw = ws.reduce((a, b) => a + b, 0);
+  return Math.sqrt(v.reduce((s, [, x], i) => s + ws[i] * (x - m) ** 2, 0) / tw);
+}
+function renderBest() {
+  const el = $("best");
+  if (!el) return;
+  const days = accData()?.scores?.days;
+  const locs = trackedLocs() || ["vallejo", "napa"];
+  const full = new Set((days || []).filter(d => locs.includes(d.loc) && (d.lead ?? 0) === 0 && !d.partial).map(d => d.date));
+  const ok = okSources(), ids = ok.map(s => s.id), tz = state.loc.tz;
+  if (!days || full.size < BEST_MIN_DAYS) {
+    const left = BEST_MIN_DAYS - full.size;
+    const eta = fmtDayLong(Date.now() + left * 24 * 3600e3, tz).split(",").slice(0, 2).join(",");
+    el.innerHTML = `<div class="best-wait"><b>Best forecast: coming soon.</b> It builds each part of the forecast (high, low, rain chance, rain timing, rain amount, wind) from the sources that have been most accurate at that part lately, so it needs ${BEST_MIN_DAYS} fully scored days first: ${full.size} so far. ${days ? `Expected around <b>${esc(eta)}</b> morning.` : ""} Until then, see the averages below.</div>`;
+    return;
+  }
+  if (ok.length < 2) { el.innerHTML = `<div class="best-wait">Waiting for forecasts…</div>`; return; }
+  const sk = [0, 1, 2].map(L => elementSkill(days, { locs, lead: L, n: 14 }).skill);
+  const skFor = i => sk[Math.min(i, 2)];
+  const W = (i, e) => elementWeights(skFor(i), e, ids) || elementWeights(sk[0], e, ids);
+  const nowHour = Math.floor(Date.now() / 3600e3) * 3600e3;
+  const dayInfo = nextDays(tz, DAYS).map((d, i) => {
+    const ds = ok.map(s => [s.id, state.results[s.id].data.daily[d.key]]).filter(([, x]) => x);
+    const wh = W(i, "high"), wl = W(i, "low"), wr = W(i, "rain"), wa = W(i, "amount") || wr, wt = W(i, "timing") || wr, ww = W(i, "wind");
+    const hi = wmean(ds.map(([id, x]) => [id, x.hi]), wh), lo = wmean(ds.map(([id, x]) => [id, x.lo]), wl);
+    const pop = wmean(ds.map(([id, x]) => [id, x.pop]), wr), qpf = wmean(ds.map(([id, x]) => [id, x.qpf]), wa);
+    const rain = isNum(pop) && pop > RAIN_SHOW_POP ? avgRainStart(ok, d.key, i === 0 ? nowHour : null, wt) : null;
+    const d0 = localHourStart(d.key, 7, tz), d1 = localHourStart(d.key, 19, tz);
+    const wind = wmean(ok.map(s => { const v = state.results[s.id].data.hourly.filter(h => h.t >= Math.max(d0, i === 0 ? nowHour : 0) && h.t < d1).map(h => h.wind).filter(isNum); return [s.id, v.length ? Math.max(...v) : null]; }), ww);
+    const spread = wstd(ds.map(([id, x]) => [id, x.hi]), wh);
+    const conf = !isNum(spread) ? null : spread <= 1.5 ? "High" : spread <= 3 ? "Medium" : "Low";
+    const cat = isNum(pop) && pop >= 50 ? "rain" : mode(ds.map(([, x]) => x.cat));
+    return { d, i, hi, lo, pop, qpf, rain, wind, spread, conf, cat };
+  });
+  const t = dayInfo[0];
+  const cur = wmean(ok.map(s => [s.id, state.results[s.id].data.current.temp]), W(0, "temp"));
+  const leaders = Object.keys(ELEMENTS).map(e => ({ e, L: elementLeader(sk[0], e, ids) })).filter(x => x.L);
+  const pill = (txt, title) => `<span class="bpill" title="${esc(title)}">${txt}</span>`;
+  el.innerHTML = `
+    <div class="best-hero">
+      <div class="best-main">
+        <div class="best-kicker">Best forecast · today${trackedLocs() ? "" : " · tuned on Vallejo + Napa"}</div>
+        <div class="best-temps"><span class="i" aria-hidden="true">${icon(t.cat, false)}</span><span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span></div>
+        <div class="cond">${esc(catLabel(t.cat, false))}${isNum(cur) ? ` · now ${T(cur)}` : ""}${t.conf ? ` · <span class="conf conf-${t.conf.toLowerCase()}" title="How closely the most accurate sources agree on the high (±${A(t.spread)})">${t.conf} confidence</span>` : ""}</div>
+        <div class="best-pills">
+          ${pill(`💧 ${P(t.pop)} chance of rain`, "Rain chance, weighted toward the sources best at rain chances lately")}
+          ${t.rain ? pill(`🌧️ ${t.rain.now ? "raining now" : "starts ~" + esc(fmtTime(t.rain.t, tz))}`, `Weighted toward the sources best at rain timing (${t.rain.n} of ${t.rain.of} sources call for rain)`) : ""}
+          ${wetAmt(t.qpf) ? pill(`☔ ${R(t.qpf)}`, "Rain total, weighted toward the sources best at amounts") : ""}
+          ${isNum(t.wind) ? pill(`💨 up to ${W_(t.wind)}`, "Peak daytime wind, weighted toward the sources best at wind") : ""}
+        </div>
+      </div>
+      <div class="best-from">
+        <div class="best-kicker">Built from the most accurate sources (last ${Math.min(14, full.size)} scored days)</div>
+        <ul>${leaders.map(({ e, L }) => `<li><span class="bel">${ELEMENTS[e].label}</span><span class="bsrc">${esc(srcShort(L.id))}</span><span class="berr">${ERR_WORD[ELEMENTS[e].fmt]} ${fmtErr(e, L.err)}</span></li>`).join("")}
+        ${leaders.length < Object.keys(ELEMENTS).length ? `<li class="bmore">${Object.keys(ELEMENTS).filter(e => !leaders.some(x => x.e === e)).map(e => ELEMENTS[e].label).join(", ")}: not enough data yet, so those use all sources equally.</li>` : ""}</ul>
+      </div>
+    </div>
+    <div class="best-days">${dayInfo.slice(1).map(x => `
+      <div class="bday" title="${x.conf ? x.conf + " confidence" : ""}">
+        <div class="dn">${esc(fmtDay(x.d.ms, tz))}</div>
+        <div class="di" aria-hidden="true">${icon(x.cat, false)}</div>
+        <div class="hl">${T(x.hi)} <span class="lo">${T(x.lo)}</span></div>
+        <div class="pp">💧 ${P(x.pop)}${wetAmt(x.qpf) ? ` · ☔ ${R(x.qpf)}` : ""}</div>
+        ${x.rain ? `<div class="rs">🌧️ ~${esc(fmtTime(x.rain.t, tz))}</div>` : ""}
+        ${x.conf ? `<div class="conf conf-${x.conf.toLowerCase()}">${x.conf}</div>` : ""}
+      </div>`).join("")}</div>`;
+}
+const W_ = mph => !isNum(mph) ? "—" : state.units === "F" ? Math.round(mph) + " mph" : Math.round(mph * 1.609) + " km/h";
 
 // Average rain start for a local day: each source's first rainy hour that day, averaged.
 // Only shown when the average rain chance for the day is above this.

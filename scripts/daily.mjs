@@ -16,7 +16,7 @@ import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { SOURCES, PRESETS, isRainyHour, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, mode, cToF } from "../src/sources.js";
-import { recentScores, smartWeights, PSEUDO_NAMES } from "../src/skill.js";
+import { recentScores, smartWeights, PSEUDO_NAMES, elementSkill, elementWeights, BEST_MIN_DAYS } from "../src/skill.js";
 
 export const TZ = "America/Los_Angeles";
 export const SET_HOUR = 6;
@@ -47,20 +47,21 @@ export function windowFor(dateKey) {
 // Compact hourly storage: arrays indexed by hour from `start`.
 function pack(hours, start, end) {
   const n = Math.round((end - start) / 3600e3);
-  const temp = Array(n).fill(null), pop = Array(n).fill(null), cat = Array(n).fill(null), qpf = Array(n).fill(null);
+  const temp = Array(n).fill(null), pop = Array(n).fill(null), cat = Array(n).fill(null), qpf = Array(n).fill(null), wind = Array(n).fill(null);
   for (const h of hours) {
     const i = Math.round((h.t - start) / 3600e3);
     if (i < 0 || i >= n) continue;
     temp[i] = r1(h.temp); pop[i] = isNum(h.pop) ? Math.round(h.pop) : null; cat[i] = h.cat || null;
     qpf[i] = isNum(h.qpf) ? Math.round(h.qpf * 1000) / 1000 : null;
+    wind[i] = isNum(h.wind) ? Math.round(h.wind) : null;
   }
-  return { start, temp, pop, cat, ...(qpf.some(isNum) ? { qpf } : {}) };
+  return { start, temp, pop, cat, ...(qpf.some(isNum) ? { qpf } : {}), ...(wind.some(isNum) ? { wind } : {}) };
 }
 export function unpack(p) {
   if (!p) return [];
   if (Array.isArray(p.hours)) return p.hours; // old format
   const out = [];
-  p.temp.forEach((t, i) => { if (isNum(t)) out.push({ t: p.start + i * 3600e3, temp: t, pop: p.pop[i], cat: p.cat[i], qpf: p.qpf?.[i] ?? null }); });
+  p.temp.forEach((t, i) => { if (isNum(t)) out.push({ t: p.start + i * 3600e3, temp: t, pop: p.pop[i], cat: p.cat[i], qpf: p.qpf?.[i] ?? null, wind: p.wind?.[i] ?? null }); });
   return out;
 }
 function summarize(hours) {
@@ -90,7 +91,9 @@ function blend(entries, weights) {
     const wetShare = hs.reduce((s, h) => s + (isRainyHour(h) ? h.w : 0), 0) / hs.reduce((s, h) => s + h.w, 0);
     const qw = hs.filter(h => isNum(h.qpf));
     const qpf = qw.length ? qw.reduce((s, h) => s + h.qpf * h.w, 0) / qw.reduce((s, h) => s + h.w, 0) : null;
-    out.push({ t, temp, pop, qpf, cat: wetShare >= 0.5 ? "rain" : mode(hs.map(h => h.cat)) });
+    const ww = hs.filter(h => isNum(h.wind));
+    const wind = ww.length ? ww.reduce((s, h) => s + h.wind * h.w, 0) / ww.reduce((s, h) => s + h.w, 0) : null;
+    out.push({ t, temp, pop, qpf, wind, cat: wetShare >= 0.5 ? "rain" : mode(hs.map(h => h.cat)) });
   }
   return out;
 }
@@ -144,9 +147,52 @@ export async function setForecast(dateKey, now, log, scores) {
       }
       if (entry.leads[0]) Lc.sources[pid] = entry;
     }
+    const best = buildBest(Lc, okIds, leads, scores, loc.id);
+    if (best) Lc.sources.best = best;
     log(`  ${loc.id}: ` + Object.entries(Lc.sources).map(([id, x]) => `${id}=${x.ok ? `${x.leads[0].hi}/${x.leads[0].lo}` : "x"}`).join(" "));
   }
   return { snap: out, problems };
+}
+
+// "Best forecast": each element (high, low, hourly temps, rain chance, rain timing, amount, wind)
+// blended from the sources that have been most accurate at that element lately.
+function wavg(pairs, w) {
+  const v = pairs.filter(([id, x]) => isNum(x) && (!w || w[id]));
+  if (!v.length) return null;
+  const ws = v.map(([id]) => w ? w[id] : 1), tw = ws.reduce((a, b) => a + b, 0);
+  return v.reduce((s, [, x], i) => s + x * ws[i], 0) / tw;
+}
+function buildBest(Lc, okIds, leads, scores, locId) {
+  const full = new Set(scores.days.filter(d => d.loc === locId && (d.lead ?? 0) === 0 && !d.partial).map(d => d.date));
+  if (full.size < BEST_MIN_DAYS) return null;
+  const sk0 = elementSkill(scores.days, { locs: [locId], lead: 0, n: 14 }).skill;
+  const entry = { ok: true, leads: {}, from: {} };
+  for (const L of LEADS) {
+    const skL = elementSkill(scores.days, { locs: [locId], lead: L, n: 14 }).skill;
+    const W = el => elementWeights(skL, el, okIds) || elementWeights(sk0, el, okIds);
+    const w = { high: W("high"), low: W("low"), temp: W("temp"), rain: W("rain"), timing: W("timing"), amount: W("amount"), wind: W("wind") };
+    const per = okIds.filter(id => Lc.sources[id].leads[L]).map(id => [id, Lc.sources[id].leads[L], unpack(Lc.sources[id].leads[L])]);
+    if (per.length < 2) continue;
+    const byT = new Map();
+    for (const [id, , hours] of per) for (const h of hours) (byT.get(h.t) || byT.set(h.t, []).get(h.t)).push([id, h]);
+    const hours = [];
+    for (const [t, hs] of [...byT.entries()].sort((a, b) => a[0] - b[0])) {
+      if (hs.length < 2) continue;
+      const rw = w.timing || w.rain;
+      const wetShare = wavg(hs.map(([id, h]) => [id, isRainyHour(h) ? 1 : 0]), rw) ?? 0;
+      hours.push({
+        t, temp: wavg(hs.map(([id, h]) => [id, h.temp]), w.temp), pop: wavg(hs.map(([id, h]) => [id, h.pop]), w.rain),
+        qpf: wavg(hs.map(([id, h]) => [id, h.qpf]), w.amount || w.rain), wind: wavg(hs.map(([id, h]) => [id, h.wind]), w.wind),
+        cat: wetShare >= 0.5 ? "rain" : mode(hs.map(([, h]) => h.cat)),
+      });
+    }
+    if (hours.length < 6) continue;
+    const { coverStart: from, windowEnd: end } = leads[L];
+    const hiFix = wavg(per.map(([id, x]) => [id, x.hi]), w.high), loFix = wavg(per.map(([id, x]) => [id, x.lo]), w.low);
+    entry.leads[L] = { ...summarize(hours), hiFix: r1(hiFix), loFix: r1(loFix), ...(isNum(hiFix) ? { hi: r1(hiFix) } : {}), ...(isNum(loFix) ? { lo: r1(loFix) } : {}), ...pack(hours, from, end) };
+    entry.from[L] = Object.fromEntries(Object.entries(w).map(([el, ws]) => [el, ws ? Object.entries(ws).sort((a, b) => b[1] - a[1])[0][0] : null]));
+  }
+  return entry.leads[0] ? entry : null;
 }
 
 // ---------- 2. SCORE ----------
@@ -176,6 +222,7 @@ export async function fetchObservations(loc, win) {
         t: Date.parse(p.timestamp),
         temp: isNum(p.temperature?.value) && p.temperature?.qualityControl !== "X" ? cToF(p.temperature.value) : null,
         precip: isNum(p.precipitationLastHour?.value) ? p.precipitationLastHour.value : null, // mm
+        wind: isNum(p.windSpeed?.value) ? p.windSpeed.value / 1.609 : null,                   // km/h -> mph
         text: p.textDescription || "",
         present: (p.presentWeather || []).map(w => w.weather || w.rawString || ""),
       })).filter(o => isNum(o.t)).sort((a, b) => a.t - b.t);
@@ -196,11 +243,16 @@ export function summarizeObs(obs, win) {
   const routine = inWin.filter(o => new Date(o.t).getUTCMinutes() >= 45 && isNum(o.precip));
   const precipMM = routine.length ? routine.reduce((s, o) => s + o.precip, 0) : null;
   // Observed temperature for each hour: nearest report within 20 minutes of the top of the hour.
-  const hours = [];
+  const hours = [], wind = [];
   for (let t = win.start; t < win.end; t += 3600e3) {
-    let best = null;
-    for (const o of obs) if (isNum(o.temp) && Math.abs(o.t - t) <= 20 * 60e3 && (!best || Math.abs(o.t - t) < Math.abs(best.t - t))) best = o;
+    let best = null, bw = null;
+    for (const o of obs) {
+      if (Math.abs(o.t - t) > 20 * 60e3) continue;
+      if (isNum(o.temp) && (!best || Math.abs(o.t - t) < Math.abs(best.t - t))) best = o;
+      if (isNum(o.wind) && (!bw || Math.abs(o.t - t) < Math.abs(bw.t - t))) bw = o;
+    }
     hours.push(best ? r1(best.temp) : null);
+    wind.push(bw ? Math.round(bw.wind) : null);
   }
   return {
     hi: temps.length ? r1(Math.max(...temps)) : null,
@@ -214,6 +266,7 @@ export function summarizeObs(obs, win) {
     precipIn: isNum(precipMM) ? Math.round(precipMM / 25.4 * 100) / 100 : null,
     n: temps.length,
     hours,
+    wind,
   };
 }
 
@@ -222,10 +275,14 @@ export function scoreSource(fc, ob, win) {
   const hours = unpack(fc).filter(h => h.t >= win.start && h.t < win.end);
   if (hours.length < 6) return { ok: false };
   const sm = summarize(hours);
-  const diffs = [];
+  if (isNum(fc.hiFix)) sm.hi = fc.hiFix;   // Best forecast: high/low blended by high/low skill
+  if (isNum(fc.loFix)) sm.lo = fc.loFix;
+  const diffs = [], wdiffs = [];
   for (const h of hours) {
     const o = ob.hours[Math.round((h.t - win.start) / 3600e3)];
     if (isNum(o) && isNum(h.temp)) diffs.push(h.temp - o);
+    const ow = ob.wind?.[Math.round((h.t - win.start) / 3600e3)];
+    if (isNum(ow) && isNum(h.wind)) wdiffs.push(h.wind - ow);
   }
   const rain = sm.rainStart && ob.rained ? "hit" : sm.rainStart ? "false" : ob.rained ? "miss" : "none";
   return {
@@ -242,6 +299,7 @@ export function scoreSource(fc, ob, win) {
     rain,
     timing: rain === "hit" ? r1((sm.rainStart - ob.rainStart) / 3600e3) : null, // + = forecast too late, - = too early
     qpf: sm.qpfTotal,                                                       // forecast rain total (in)
+    windMae: wdiffs.length >= 6 ? r1(mean(wdiffs.map(Math.abs))) : null,    // hourly wind miss (mph)
     qpfErr: isNum(sm.qpfTotal) && isNum(ob.precipIn) ? Math.round((sm.qpfTotal - ob.precipIn) * 100) / 100 : null,
   };
 }
@@ -361,7 +419,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
     }
   }
   for (const s of SOURCES) scores.sources[s.id] = { name: s.name, short: s.short, group: s.group || null };
-  for (const [id, name] of Object.entries(PSEUDO_NAMES)) scores.sources[id] = { name, short: id === "avg" ? "Average" : "Smart avg", group: "blend" };
+  for (const [id, name] of Object.entries(PSEUDO_NAMES)) scores.sources[id] = { name, short: { avg: "Average", smart: "Smart avg", best: "Best" }[id], group: "blend" };
   scores.version = 2;
   if (changed || setNow) {
     scores.days.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.lead ?? 0) - (b.lead ?? 0) || (a.loc < b.loc ? -1 : 1));
