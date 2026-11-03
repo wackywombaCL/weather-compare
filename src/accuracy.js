@@ -136,6 +136,7 @@ function renderRecent(loc) {
     }).join("");
     return `<div class="panel daycard scroll">
       <h3>${esc(fmtDayLong(d.windowStart, TZ))}${locsFor(loc).length > 1 ? " · " + esc(locName(d.loc)) : ""}</h3>
+      ${d.partial ? `<div class="obsline">⚠️ Forecast was set late (${esc(fmtTime(d.setAt, TZ))}), so this only covers ${esc(fmtTime(d.windowStart, TZ))} onward and isn't counted in the long-term scoreboard.</div>` : ""}
       <div class="obsline">Actual at ${esc(d.station)}: high <b>${T(o.hi)}</b>, low <b>${T(o.lo)}</b> · ${rainObs}</div>
       <table class="acc"><thead><tr><th>Source</th><th>Score</th><th>High (miss)</th><th>Low (miss)</th><th>Hourly miss</th><th style="text-align:left">Rain</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join("");
@@ -149,7 +150,8 @@ function renderRecent(loc) {
 }
 
 function renderLongTerm(loc) {
-  const all = (acc.scores?.days || []).filter(d => locsFor(loc).includes(d.loc));
+  // Days whose forecast was set late cover only part of the window: shown in "Last 3 days", left out of long-term stats.
+  const all = (acc.scores?.days || []).filter(d => locsFor(loc).includes(d.loc) && !d.partial);
   const years = [...new Set(all.map(d => d.date.slice(0, 4)))].sort().reverse();
   const sel = $("accPeriod");
   if (!years.includes(acc.period)) acc.period = "all";

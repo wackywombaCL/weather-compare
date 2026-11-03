@@ -39,7 +39,7 @@ export function windowFor(dateKey) {
 export async function setForecast(dateKey, now, log) {
   const win = windowFor(dateKey);
   const from = Math.max(win.start, Math.floor(now / 3600e3) * 3600e3);
-  const out = { date: dateKey, setAt: now, windowStart: win.start, windowEnd: win.end, locations: {} };
+  const out = { date: dateKey, setAt: now, windowStart: win.start, windowEnd: win.end, coverStart: from, locations: {} };
   for (const loc of LOCATIONS) {
     const L = (out.locations[loc.id] = { name: loc.name, lat: loc.lat, lon: loc.lon, sources: {} });
     await Promise.all(SOURCES.map(async s => {
@@ -98,7 +98,9 @@ export async function fetchObservations(loc, win) {
         present: (p.presentWeather || []).map(w => w.weather || w.rawString || ""),
       })).filter(o => isNum(o.t)).sort((a, b) => a.t - b.t);
       const inWin = obs.filter(o => o.t >= win.start && o.t < win.end);
-      if (inWin.filter(o => isNum(o.temp)).length >= 16) return { station: id, obs };
+      // Need temperature reports for at least ~2/3 of the window's hours.
+      const need = Math.max(6, Math.floor((win.end - win.start) / 3600e3 * 0.65));
+      if (inWin.filter(o => isNum(o.temp)).length >= need) return { station: id, obs };
     } catch {}
   }
   return null;
@@ -187,7 +189,9 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
     const date = f.replace(".json", "");
     const snap = await readJSON(path.join(dataDir, "forecasts", f), null);
     if (!snap) continue;
-    const win = { start: snap.windowStart, end: snap.windowEnd };
+    // If the forecast was set late (e.g. a manual run in the evening), only score the hours it covered.
+    const win = { start: snap.coverStart ?? snap.windowStart, end: snap.windowEnd };
+    const partial = win.start - snap.windowStart >= 2 * 3600e3;
     if (now < win.end + 20 * 60e3) continue;            // window not over yet
     if (now - win.end > 6 * 24 * 3600e3) continue;      // too old: NWS keeps about a week of observations
     for (const loc of LOCATIONS) {
@@ -199,7 +203,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
       const ob = summarizeObs(got.obs, win);
       const src = {};
       for (const s of SOURCES) src[s.id] = scoreSource(snap.locations[loc.id].sources[s.id], ob, win);
-      scores.days.push({ date, loc: loc.id, station: got.station, windowStart: win.start, windowEnd: win.end, setAt: snap.setAt, obs: ob, src });
+      scores.days.push({ date, loc: loc.id, station: got.station, partial, windowStart: win.start, windowEnd: win.end, setAt: snap.setAt, obs: ob, src });
       log(`  ${got.station}: obs ${ob.hi}/${ob.lo}, rain ${ob.rained ? "yes" : "no"} | ` +
         SOURCES.map(s => `${s.id} hi${src[s.id].hiErr ?? "-"} lo${src[s.id].loErr ?? "-"} mae${src[s.id].mae ?? "-"} ${src[s.id].rain ?? ""}`).join(" | "));
       changed = true;
