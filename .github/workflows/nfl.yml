@@ -1,0 +1,34 @@
+name: NFL schedule
+
+# Refreshes data/nfl.json (this week's games and stadiums) for the NFL tab. The daily job also
+# does this each morning; this adds midday/evening refreshes for schedule changes and scores.
+on:
+  schedule:
+    - cron: "17 19,23,3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nfl
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/nfl.mjs
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/nfl.json
+          if git diff --cached --quiet; then echo "No change."; exit 0; fi
+          git commit -m "NFL schedule $(date -u +%F)"
+          for i in 1 2 3 4; do git pull --rebase -q origin main && git push -q && exit 0; sleep $((i * 3)); done
+          exit 1
