@@ -1,4 +1,4 @@
-import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
+import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
 import { initAccuracy, renderAccuracy } from "./accuracy.js";
 
 const HOURS = 30;
@@ -175,15 +175,19 @@ function renderAverage() {
       <dt>Wind</dt><dd>${W(mean(cur.map(c => c.wind)))}</dd>
     </dl>`;
 
+  const nowHour = Math.floor(Date.now() / 3600e3) * 3600e3;
   $("avgDays").innerHTML = nextDays(tz, DAYS).map((d, i) => {
     const ds = ok.map(s => state.results[s.id].data.daily[d.key]).filter(Boolean);
     const his = ds.map(x => x.hi).filter(isNum), los = ds.map(x => x.lo).filter(isNum);
     const c = mode(ds.map(x => x.cat));
+    const avgPop = mean(ds.map(x => x.pop));
+    const rain = isNum(avgPop) && avgPop > RAIN_SHOW_POP ? avgRainStart(ok, d.key, i === 0 ? nowHour : null) : null;
     return `<div class="day">
       <div class="dn">${i === 0 ? "Today" : fmtDay(d.ms, tz)}</div>
       <div class="di" aria-hidden="true">${ds.length ? icon(c, false) : ""}</div>
       <div class="hl">${T(mean(his))} <span class="lo">${T(mean(los))}</span></div>
-      <div class="pp">💧 ${P(mean(ds.map(x => x.pop)))}</div>
+      <div class="pp">💧 ${P(avgPop)}</div>
+      ${rain ? `<div class="rs" title="Average of when each source has rain starting (${rain.n} of ${rain.of} sources call for rain that day)">🌧️ ${rain.now ? "now" : "~" + esc(fmtTime(rain.t, tz))}<span class="rsn"> · ${rain.n}/${rain.of}</span></div>` : ""}
       <div class="rg" title="Range of highs across sources">${his.length > 1 ? `highs ${T(Math.min(...his))}–${T(Math.max(...his))}` : "&nbsp;"}</div>
     </div>`;
   }).join("");
@@ -198,6 +202,26 @@ function renderAverage() {
   const ser = [{ name: "Average", color: "var(--avg)", values: avg.map(cvt), band: [lo.map(cvt), hi.map(cvt)], extra: i => `<div class="row"><span>Range</span><span>${T(lo[i])} – ${T(hi[i])}</span></div>` }];
   $("avgLegend").innerHTML = `<span><span class="sw" style="background:var(--avg)"></span>Average temperature</span>` + (ok.length > 1 ? `<span><span class="sw band"></span>Lowest–highest source</span>` : "");
   lineChart($("avgChart"), grid, ser, { tz });
+}
+
+// Average rain start for a local day: each source's first rainy hour that day, averaged.
+// Only shown when the average rain chance for the day is above this.
+const RAIN_SHOW_POP = 40;
+function avgRainStart(ok, key, fromT) {
+  const tz = state.loc.tz;
+  const start = fromT ?? localHourStart(key, 0, tz), end = localHourStart(dayKey(localHourStart(key, 12, tz) + 24 * 3600e3, tz), 0, tz);
+  const starts = [];
+  let of = 0;
+  for (const s of ok) {
+    const hrs = state.results[s.id].data.hourly.filter(h => h.t >= start && h.t < end);
+    if (hrs.length < 6) continue;          // source doesn't forecast hourly that far out
+    of++;
+    const r = hrs.find(isRainyHour);
+    if (r) starts.push(r.t);
+  }
+  if (!starts.length) return null;
+  const t = Math.round(mean(starts) / 1800e3) * 1800e3;   // nearest half hour
+  return { t, now: fromT != null && t <= fromT, n: starts.length, of };
 }
 
 function renderDaily() {

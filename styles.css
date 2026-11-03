@@ -112,7 +112,9 @@ section > .hint { color: var(--text-3); font-size: 13px; margin: 0 0 12px; }
 .day .hl { font-variant-numeric: tabular-nums; }
 .day .hl .lo { color: var(--text-3); }
 .day .pp, .day .rg { font-size: 12px; color: var(--text-3); }
-@media (max-width: 480px) { .day .rg { display: none; } .day .di { font-size: 22px; } }
+.day .rs { font-size: 12px; color: var(--text); font-weight: 600; margin-top: 2px; }
+.day .rs .rsn { font-weight: 400; color: var(--text-3); }
+@media (max-width: 480px) { .day .rg, .day .rs .rsn { display: none; } .day .di { font-size: 22px; } }
 
 /* Tables */
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }

@@ -55,6 +55,10 @@ export const CAT = {
   thunder: { d: "⛈️", n: "⛈️", label: "Thunderstorms" },
 };
 export const WET = new Set(["drizzle", "rain", "sleet", "snow", "thunder"]);
+// "Rain starts" = the first hour showing rain/snow/storms, or a rain chance of at least this much.
+// Used by both the page and the accuracy scoring, so they always agree.
+export const RAIN_POP = 50;
+export const isRainyHour = h => WET.has(h.cat) || (typeof h.pop === "number" && h.pop >= RAIN_POP);
 export const icon = (cat, night) => (CAT[cat] || CAT.cloudy)[night ? "n" : "d"];
 export const catLabel = (cat, night) => cat === "clear" && !night ? "Sunny" : (CAT[cat] || CAT.cloudy).label;
 

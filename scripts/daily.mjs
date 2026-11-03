@@ -11,14 +11,13 @@
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
-import { SOURCES, PRESETS, WET, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, cToF } from "../src/sources.js";
+import { SOURCES, PRESETS, isRainyHour, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, cToF } from "../src/sources.js";
 
 export const TZ = "America/Los_Angeles";
 export const SET_HOUR = 6;
 const LOCATIONS = [PRESETS.vallejo, PRESETS.napa];
 // Observation stations to try first; the nearest NWS stations for the point are tried after these.
 const STATION_PREF = { napa: ["KAPC"], vallejo: [] };
-const RAIN_POP = 50; // an hour counts as "rain forecast" at >= this % chance, or when its conditions are rain/snow/storms
 
 const r1 = v => isNum(v) ? Math.round(v * 10) / 10 : null;
 const nextDayKey = k => dayKey(localHourStart(k, 12, TZ) + 24 * 3600e3, TZ);
@@ -51,7 +50,7 @@ export async function setForecast(dateKey, now, log) {
         if (!hours.length) throw new Error("no hourly data in window");
         const temps = hours.map(h => h.temp).filter(isNum);
         const pops = hours.map(h => h.pop).filter(isNum);
-        const rainHour = hours.find(h => WET.has(h.cat) || (isNum(h.pop) && h.pop >= RAIN_POP));
+        const rainHour = hours.find(isRainyHour);
         L.sources[s.id] = {
           ok: true,
           hi: r1(Math.max(...temps)), lo: r1(Math.min(...temps)),
