@@ -202,10 +202,13 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
       if (!got) { log(`  no usable observations yet`); continue; }
       const ob = summarizeObs(got.obs, win);
       const src = {};
-      for (const s of SOURCES) src[s.id] = scoreSource(snap.locations[loc.id].sources[s.id], ob, win);
+      for (const s of SOURCES) {
+        const fc = snap.locations[loc.id].sources[s.id];
+        if (fc) src[s.id] = scoreSource(fc, ob, win);   // sources not tracked that day are left out
+      }
       scores.days.push({ date, loc: loc.id, station: got.station, partial, windowStart: win.start, windowEnd: win.end, setAt: snap.setAt, obs: ob, src });
       log(`  ${got.station}: obs ${ob.hi}/${ob.lo}, rain ${ob.rained ? "yes" : "no"} | ` +
-        SOURCES.map(s => `${s.id} hi${src[s.id].hiErr ?? "-"} lo${src[s.id].loErr ?? "-"} mae${src[s.id].mae ?? "-"} ${src[s.id].rain ?? ""}`).join(" | "));
+        SOURCES.filter(s => src[s.id]).map(s => `${s.id} hi${src[s.id].hiErr ?? "-"} lo${src[s.id].loErr ?? "-"} mae${src[s.id].mae ?? "-"} ${src[s.id].rain ?? ""}`).join(" | "));
       changed = true;
     }
   }
