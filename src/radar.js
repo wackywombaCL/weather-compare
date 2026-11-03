@@ -50,8 +50,9 @@ function play() {
 function init() {
   const center = [38.2, -122.27];
   map = L.map("radarMap", { zoomSnap: 0.5, minZoom: 5, maxZoom: 12 }).setView(center, 8.5);
-  L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark() ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, {
-    subdomains: "abcd", maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  // OpenStreetMap's standard tiles (no key needed); darkened with a CSS filter in dark mode.
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, className: "basemap", attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
   for (const loc of [PRESETS.vallejo, PRESETS.napa]) {
     L.circle([loc.lat, loc.lon], { radius: RING_MI * 1609.34, color: dark() ? "#f0efec" : "#0b0b0b", weight: 1.5, dashArray: "5 5", fill: false, interactive: false }).addTo(map);

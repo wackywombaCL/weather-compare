@@ -319,3 +319,8 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .leaflet-tooltip.radar-label { background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: none; font-weight: 600; padding: 1px 6px; }
 .leaflet-tooltip.radar-label::before { display: none; }
 .leaflet-container { font: inherit; }
+
+/* Street map: soften in light mode, invert for dark mode so the radar stays readable */
+.basemap { filter: saturate(.35) brightness(1.05); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .basemap { filter: invert(1) hue-rotate(180deg) brightness(.85) saturate(.3); } }
+:root[data-theme="dark"] .basemap { filter: invert(1) hue-rotate(180deg) brightness(.85) saturate(.3); }
