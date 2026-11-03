@@ -58,6 +58,24 @@ if (PROXY_URL && process.env.ACCESS_CODE) {
   }
 }
 
+// Station quality over the last 24 hours (candidates for scoring Vallejo).
+{
+  const ids = (process.env.STATION_PROBE || "UR476,C0879,G7397,E4251,MZXC1,F8437,C6944,G0070,KAPC").split(",");
+  console.log("\nStation quality, last 24 h (reports / with temp / wind / humidity / rain field):");
+  const end = new Date(), start = new Date(Date.now() - 24 * 3600e3);
+  for (const id of ids) {
+    try {
+      const meta = await getJSON(`https://api.weather.gov/stations/${id}`, { tries: 1 });
+      const [lon, lat] = meta.geometry.coordinates;
+      const j = await getJSON(`https://api.weather.gov/stations/${id}/observations?start=${start.toISOString()}&end=${end.toISOString()}`, { tries: 2 });
+      const o = (j.features || []).map(f => f.properties);
+      const c = k => o.filter(p => p[k]?.value != null).length;
+      const temps = o.map(p => p.temperature?.value).filter(v => v != null).map(cToF);
+      console.log(`  ${id.padEnd(6)} ${meta.properties.name} (${lat.toFixed(3)}, ${lon.toFixed(3)}, elev ${Math.round((meta.properties.elevation?.value ?? 0) * 3.281)} ft): ${o.length} reports / ${c("temperature")} temp / ${c("windSpeed")} wind / ${c("relativeHumidity")} hum / ${c("precipitationLastHour")} rain-hr / ${c("precipitationLast6Hours")} rain-6h; temp range ${temps.length ? Math.round(Math.min(...temps)) + "–" + Math.round(Math.max(...temps)) + "°F" : "-"}`);
+    } catch (e) { console.log(`  ${id}: ${e.message}`); }
+  }
+}
+
 // Nearby observation stations: which ones report, and how far away they are.
 for (const l of [PRESETS.vallejo, PRESETS.napa]) {
   console.log(`\nStations near ${l.name}:`);
