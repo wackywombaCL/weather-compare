@@ -1,0 +1,26 @@
+name: Tests
+
+# Runs the simulated end-to-end test of the daily scoring job on every change to the code,
+# so a mistake can't silently corrupt weeks of accuracy data.
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", "scripts/**", "tests/**", "worker/**", ".github/workflows/test.yml"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check
+        run: for f in src/*.js scripts/*.mjs worker/index.js sw.js tests/*.mjs; do node --check "$f" || exit 1; done
+      - name: Simulated scoring test
+        run: node tests/simulate.test.mjs

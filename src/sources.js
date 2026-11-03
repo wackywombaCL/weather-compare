@@ -570,7 +570,7 @@ async function fetchWeatherAPI(loc, signal) {
 
 export const SOURCES = [
   { id: "nws",       name: "National Weather Service", short: "NWS",        site: "https://www.weather.gov", fetch: fetchNWS },
-  { id: "openmeteo", name: "Open-Meteo",               short: "Open-Meteo", site: "https://open-meteo.com",  color: "var(--s2)", fetch: fetchOpenMeteo },
+  // Open-Meteo's own blend ("openmeteo") was retired: for the US it returned the same numbers as GFS.
   { id: "metno",     name: "MET Norway (Yr)",          short: "Yr",         site: "https://www.yr.no",       color: "var(--s3)", fetch: fetchMetNo },
   { id: "pirate",    name: "Pirate Weather",           short: "Pirate",     site: "https://pirateweather.net", fetch: fetchPirate,
     key: { env: "PIRATE_KEY", signup: "https://pirate-weather.apiable.io" } },

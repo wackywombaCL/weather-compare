@@ -69,7 +69,9 @@ const scoreBadge = v => { const g = rating(v); return g ? `<span class="badge b-
 const timingText = h => !isNum(h) ? "" : Math.abs(h) < 0.5 ? "on time" : `${Math.abs(h).toFixed(Math.abs(h) < 10 ? 1 : 0).replace(/\.0$/, "")}h ${h > 0 ? "late" : "early"}`;
 const isPseudo = id => PSEUDO.has(id);
 const nameCell = id => `<th class="${isPseudo(id) ? "blend" : ""}">${isSelected(id) ? `<span class="sw" style="background:${selColor(id)}"></span>` : ""}${esc(srcShort(id))}</th>`;
-const allIds = days => { const ids = new Set(); days.forEach(d => Object.keys(d.src).forEach(id => ids.add(id))); return [...ids]; };
+// Current sources and blends only: retired sources' history stays in the data but isn't shown.
+const shown = id => PSEUDO.has(id) || SOURCES.some(s => s.id === id);
+const allIds = days => { const ids = new Set(); days.forEach(d => Object.keys(d.src).forEach(id => shown(id) && ids.add(id))); return [...ids]; };
 const metSeason = date => { const m = +date.slice(5, 7); return m === 12 || m <= 2 ? "Winter" : m <= 5 ? "Spring" : m <= 8 ? "Summer" : "Fall"; };
 const wetSeason = date => { const m = +date.slice(5, 7); return m >= 11 || m <= 4 ? "Wet" : "Dry"; };
 const td = (label, html, cls = "") => `<td data-label="${esc(label)}"${cls ? ` class="${cls}"` : ""}>${html}</td>`;
@@ -131,7 +133,7 @@ function renderToday(loc) {
   $("accToday").innerHTML = locsFor(loc).map(lid => {
     const L = snap.locations[lid];
     if (!L) return "";
-    const ids = Object.keys(L.sources).sort((a, b) => (isPseudo(b) - isPseudo(a)) || ((acc.scores ? 0 : 0)));
+    const ids = Object.keys(L.sources).filter(shown).sort((a, b) => (isPseudo(b) - isPseudo(a)) || ((acc.scores ? 0 : 0)));
     const rows = ids.map(id => {
       const x = todayEntry(snap, lid, id);
       if (!x) return "";
@@ -162,7 +164,7 @@ function renderRecent(loc) {
   html += recentDays.map((d, k) => {
     const o = d.obs;
     const rainObs = o.rained ? `🌧️ started ~${esc(fmtTime(o.rainStart, TZ))}${isNum(o.precipIn) ? `, ${o.precipIn.toFixed(2)} in` : ""}` : "no rain";
-    const order = Object.keys(d.src).sort((a, b) => (isPseudo(b) - isPseudo(a)) || ((dayScore(d.src[b]) ?? -1) - (dayScore(d.src[a]) ?? -1)));
+    const order = Object.keys(d.src).filter(shown).sort((a, b) => (isPseudo(b) - isPseudo(a)) || ((dayScore(d.src[b]) ?? -1) - (dayScore(d.src[a]) ?? -1)));
     const rows = order.map(id => {
       const x = d.src[id];
       if (!x?.ok) return `<tr>${nameCell(id)}<td colspan="5" class="l miss" data-label="">No forecast saved that day</td></tr>`;

@@ -41,6 +41,23 @@ if (PROXY_URL && process.env.ACCESS_CODE) {
   try { const r = await fetch(`${PROXY_URL}/v1/pirate?lat=38.3&lon=-122.29`, { headers: { "X-Access-Code": "wrong" } }); console.log(`  wrong code is rejected: ${r.status === 401 ? "yes" : "NO (HTTP " + r.status + ")"}`); } catch (e) { console.log("  wrong-code test failed:", e.message); }
 }
 
+// Every NWS-listed station within 15 miles of Vallejo (all networks), with its latest report.
+{
+  const v = PRESETS.vallejo;
+  const mi = (a, b) => { const R = 3958.8, r = x => x * Math.PI / 180; const dl = r(b[0] - a[0]), dn = r(b[1] - a[1]); const h = Math.sin(dl / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+  let url = "https://api.weather.gov/stations?state=CA&limit=500", all = [];
+  for (let page = 0; url && page < 20; page++) {
+    try { const j = await getJSON(url); all.push(...(j.features || [])); url = (j.features || []).length ? j.pagination?.next : null; } catch (e) { console.log("station list failed:", e.message); break; }
+  }
+  const near = all.map(f => ({ id: f.properties.stationIdentifier, name: f.properties.name, d: mi([v.lat, v.lon], [f.geometry.coordinates[1], f.geometry.coordinates[0]]) })).filter(x => x.d <= 15).sort((a, b) => a.d - b.d);
+  console.log(`\nNWS stations within 15 mi of Vallejo (${all.length} CA stations scanned):`);
+  for (const x of near) {
+    let latest = "";
+    try { const ob = (await getJSON(`https://api.weather.gov/stations/${x.id}/observations/latest`, { tries: 1 })).properties; latest = `latest ${Math.round((Date.now() - Date.parse(ob.timestamp)) / 60000)} min ago, ${ob.temperature?.value == null ? "no temp" : Math.round(cToF(ob.temperature.value)) + "°F"}`; } catch (e) { latest = "no recent data"; }
+    console.log(`  ${x.id.padEnd(8)} ${x.d.toFixed(1)} mi  ${x.name} — ${latest}`);
+  }
+}
+
 // Nearby observation stations: which ones report, and how far away they are.
 for (const l of [PRESETS.vallejo, PRESETS.napa]) {
   console.log(`\nStations near ${l.name}:`);
