@@ -9,7 +9,7 @@ export const PRESETS = {
 };
 
 // Sources still to be added once API keys are in hand.
-export const PENDING_SOURCES = ["Weatherbit"];
+export const PENDING_SOURCES = [];
 
 // ---------- Request options (the Node job sets a User-Agent; browsers can't) ----------
 let requestInit = {};

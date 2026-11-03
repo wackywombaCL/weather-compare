@@ -149,7 +149,7 @@ function renderCards() {
       </dl></div>`;
   }).join("");
   $("cards").querySelectorAll("[data-open-settings]").forEach(b => b.addEventListener("click", openSettings));
-  $("pending").innerHTML = "Coming once you add API keys: " + PENDING_SOURCES.map(n => `<span class="chip">${esc(n)}</span>`).join("");
+  $("pending").innerHTML = PENDING_SOURCES.length ? "Coming once you add API keys: " + PENDING_SOURCES.map(n => `<span class="chip">${esc(n)}</span>`).join("") : "";
 }
 
 function renderAverage() {
@@ -346,7 +346,7 @@ function openSettings() {
     <div class="keyrow">
       <label for="key_${s.id}">${esc(s.name)} <a href="${esc(s.key.signup)}" target="_blank" rel="noopener">Get a key ↗</a></label>
       <input id="key_${s.id}" data-id="${s.id}" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key" value="${esc(keys[s.id] || "")}">
-    </div>`).join("") + `<p class="hint" style="margin-top:14px">More sources (${esc(PENDING_SOURCES.join(", "))}) will appear here as they're added.</p>`;
+    </div>`).join("") + (PENDING_SOURCES.length ? `<p class="hint" style="margin-top:14px">More sources (${esc(PENDING_SOURCES.join(", "))}) will appear here as they're added.</p>` : "");
   $("keyRows").querySelectorAll("input").forEach(i => {
     i.addEventListener("focus", () => i.type = "text");
     i.addEventListener("blur", () => i.type = "password");

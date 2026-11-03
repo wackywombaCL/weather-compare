@@ -3,9 +3,12 @@
 Side-by-side forecasts from several weather providers, a blended "average of everyone", and a
 running accuracy scoreboard.
 
-**Sources (no key needed):** National Weather Service, Open-Meteo, MET Norway (Yr).
-**Planned (need free API keys):** OpenWeatherMap, WeatherAPI.com, Tomorrow.io, Visual Crossing,
-AccuWeather, Weatherbit, Pirate Weather.
+**No key needed:** National Weather Service, Open-Meteo, MET Norway (Yr).
+**Free API key needed:** Pirate Weather, Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap.
+
+Keys go in two places, never in the code: GitHub secrets (`PIRATE_KEY`, `TOMORROW_KEY`,
+`WEATHERAPI_KEY`, `VISUALCROSSING_KEY`, `OWM_KEY`) for the daily job, and the app's ⚙️ Settings
+on each device. The "Check sources" workflow prints what every source returns.
 
 ## How accuracy tracking works
 
