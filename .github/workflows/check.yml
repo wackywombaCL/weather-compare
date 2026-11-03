@@ -1,0 +1,25 @@
+name: Check sources
+
+# Manual health check: fetches every source once for Vallejo and prints what came back.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check.mjs
+        env:
+          PIRATE_KEY: ${{ secrets.PIRATE_KEY }}
+          TOMORROW_KEY: ${{ secrets.TOMORROW_KEY }}
+          WEATHERAPI_KEY: ${{ secrets.WEATHERAPI_KEY }}
+          VISUALCROSSING_KEY: ${{ secrets.VISUALCROSSING_KEY }}
+          OWM_KEY: ${{ secrets.OWM_KEY }}
+          WEATHERBIT_KEY: ${{ secrets.WEATHERBIT_KEY }}

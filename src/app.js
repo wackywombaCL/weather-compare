@@ -58,8 +58,27 @@ const hourGrid = () => { const t0 = Math.floor(Date.now() / 3600e3) * 3600e3; re
 const cvt = f => !isNum(f) ? null : state.units === "F" ? f : (f - 32) * 5 / 9;
 
 // ---------- Fetch orchestration ----------
+// Sources with API keys have tight free limits (Tomorrow.io: 25 requests/hour), so reuse a
+// recent result for the same place instead of asking again. The ↻ button forces a refresh.
+const CACHE_MS = 10 * 60 * 1000;
+const cacheKey = (s, loc) => `wc.cache.${s.id}.${(+loc.lat).toFixed(3)},${(+loc.lon).toFixed(3)}`;
+async function fetchSource(s, loc, signal, force) {
+  if (!s.key) return s.fetch(loc, signal);
+  const k = cacheKey(s, loc), hit = store.get(k, null);
+  if (!force && hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+  const data = await s.fetch(loc, signal);
+  store.set(k, { at: Date.now(), data });
+  return data;
+}
+function friendlyError(e) {
+  if (e.friendly) return e.message;
+  if (e.status === 401 || e.status === 403) return "Key was rejected. Check it in ⚙️ Settings.";
+  if (e.status === 429) return "Free-plan request limit reached. It will come back on its own.";
+  return "Couldn't load (" + (e.message || "network error") + ")";
+}
+
 let controller = null;
-async function loadAll() {
+async function loadAll(force = false) {
   controller?.abort();
   controller = new AbortController();
   const run = ++state.run;
@@ -68,14 +87,14 @@ async function loadAll() {
   renderAll();
   await Promise.all(SOURCES.map(async s => {
     try {
-      const data = await s.fetch(loc, controller.signal);
+      const data = await fetchSource(s, loc, controller.signal, force);
       if (run !== state.run) return;
       state.results[s.id] = { status: "ok", data };
       if (s.id === "nws" && data.place && loc.autoName) { loc.name = data.place; delete loc.autoName; store.set("wc.loc", loc); }
     } catch (e) {
       if (run !== state.run || e.name === "AbortError") return;
       console.warn(s.id, e);
-      state.results[s.id] = { status: e.nokey ? "nokey" : "error", error: e.friendly ? e.message : "Couldn't load (" + (e.message || "network error") + ")" };
+      state.results[s.id] = { status: e.nokey ? "nokey" : "error", error: friendlyError(e) };
     }
     renderAll();
   }));
@@ -340,7 +359,7 @@ $("settings").addEventListener("close", () => {
   const keys = getKeys();
   $("keyRows").querySelectorAll("input").forEach(i => { const v = i.value.trim(); if (v) keys[i.dataset.id] = v; else delete keys[i.dataset.id]; });
   store.set("wc.keys", keys);
-  loadAll();
+  loadAll(true);
 });
 
 // ---------- Tabs ----------
@@ -363,7 +382,7 @@ function setLocation(loc) {
   loadAll();
 }
 document.querySelectorAll(".preset").forEach(b => b.addEventListener("click", () => setLocation({ ...PRESETS[b.dataset.preset] })));
-$("refreshBtn").addEventListener("click", () => { loadAll(); initAccuracy(true); });
+$("refreshBtn").addEventListener("click", () => { loadAll(true); initAccuracy(true); });
 $("unitBtn").addEventListener("click", () => { state.units = state.units === "F" ? "C" : "F"; store.set("wc.units", state.units); renderAll(); renderAccuracy(); });
 $("geoBtn").addEventListener("click", () => {
   if (!navigator.geolocation) return alert("Location isn't available in this browser.");

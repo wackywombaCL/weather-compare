@@ -9,7 +9,7 @@ export const PRESETS = {
 };
 
 // Sources still to be added once API keys are in hand.
-export const PENDING_SOURCES = ["OpenWeatherMap", "WeatherAPI.com", "Tomorrow.io", "Visual Crossing", "Weatherbit"];
+export const PENDING_SOURCES = ["OpenWeatherMap", "Visual Crossing", "Weatherbit"];
 
 // ---------- Request options (the Node job sets a User-Agent; browsers can't) ----------
 let requestInit = {};
@@ -305,10 +305,71 @@ async function fetchPirate(loc, signal) {
   return { current, hourly, daily, note: "NOAA models (HRRR, NBM, GFS)" };
 }
 
+// Tomorrow.io weather codes -> category, label
+const TIO = {
+  1000: ["clear", "Clear"], 1100: ["partly", "Mostly clear"], 1101: ["partly", "Partly cloudy"], 1102: ["cloudy", "Mostly cloudy"], 1001: ["cloudy", "Cloudy"],
+  2000: ["fog", "Fog"], 2100: ["fog", "Light fog"],
+  4000: ["drizzle", "Drizzle"], 4200: ["drizzle", "Light rain"], 4001: ["rain", "Rain"], 4201: ["rain", "Heavy rain"],
+  5000: ["snow", "Snow"], 5001: ["snow", "Flurries"], 5100: ["snow", "Light snow"], 5101: ["snow", "Heavy snow"],
+  6000: ["sleet", "Freezing drizzle"], 6001: ["sleet", "Freezing rain"], 6200: ["sleet", "Light freezing rain"], 6201: ["sleet", "Heavy freezing rain"],
+  7000: ["sleet", "Ice pellets"], 7101: ["sleet", "Heavy ice pellets"], 7102: ["sleet", "Light ice pellets"],
+  8000: ["thunder", "Thunderstorm"],
+};
+async function fetchTomorrow(loc, signal) {
+  const key = needKey("tomorrow");
+  // One request (free plan: 25/hour, 500/day): hourly for the next 5 days plus daily summaries.
+  const j = await getJSON(`https://api.tomorrow.io/v4/weather/forecast?location=${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}&units=imperial&timesteps=1h,1d&apikey=${encodeURIComponent(key)}`, { signal, tries: 1 });
+  const tz = loc.tz;
+  const days = j.timelines?.daily || [];
+  // Night = outside sunrise..sunset of that local day (Tomorrow's hourly codes have no day/night flag).
+  const sun = {};
+  for (const d of days) if (d.values?.sunriseTime && d.values?.sunsetTime) sun[dayKey(Date.parse(d.time), tz)] = [Date.parse(d.values.sunriseTime), Date.parse(d.values.sunsetTime)];
+  const isNight = t => { const s = sun[dayKey(t, tz)]; if (s) return t < s[0] || t >= s[1]; const h = localHour(t, tz); return h < 7 || h >= 18; };
+  const hourly = (j.timelines?.hourly || []).map(h => {
+    const v = h.values || {}, t = Date.parse(h.time);
+    const [cat, text] = TIO[v.weatherCode] || ["cloudy", "—"];
+    return { t, temp: v.temperature, pop: v.precipitationProbability ?? null, cat, text, night: isNight(t), wind: v.windSpeed, windDir: v.windDirection, humidity: v.humidity, feels: v.temperatureApparent };
+  });
+  if (!hourly.length) throw new Error("no hourly data");
+  const now = Date.now();
+  const h0 = [...hourly].reverse().find(h => h.t <= now) || hourly[0];
+  const current = { temp: h0.temp, feels: h0.feels, humidity: h0.humidity, wind: h0.wind, windDir: h0.windDir, cat: h0.cat, text: h0.text, night: h0.night, observedAt: now, kind: "model" };
+  const daily = {};
+  for (const d of days) {
+    const v = d.values || {};
+    const [cat, text] = TIO[v.weatherCodeMax ?? v.weatherCodeMin] || ["cloudy", "—"];
+    daily[dayKey(Date.parse(d.time) + 3 * 3600e3, tz)] = { hi: v.temperatureMax, lo: v.temperatureMin, pop: v.precipitationProbabilityMax ?? v.precipitationProbabilityAvg ?? null, cat, text };
+  }
+  return { current, hourly, daily, note: "Tomorrow.io's own model blend" };
+}
+
+async function fetchWeatherAPI(loc, signal) {
+  const key = needKey("weatherapi");
+  const j = await getJSON(`https://api.weatherapi.com/v1/forecast.json?key=${encodeURIComponent(key)}&q=${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}&days=5&aqi=no&alerts=no`, { signal });
+  const c = j.current;
+  const pop = x => { const v = [x.chance_of_rain, x.chance_of_snow, x.daily_chance_of_rain, x.daily_chance_of_snow].map(Number).filter(isNum); return v.length ? Math.max(...v) : null; };
+  const current = {
+    temp: c.temp_f, feels: c.feelslike_f, humidity: c.humidity, wind: c.wind_mph, windDir: c.wind_degree,
+    cat: catFromText(c.condition?.text), text: c.condition?.text || "—", night: c.is_day === 0,
+    observedAt: (c.last_updated_epoch || Date.now() / 1000) * 1000, kind: "model",
+  };
+  const hourly = [], daily = {};
+  for (const fd of j.forecast?.forecastday || []) {
+    const d = fd.day || {};
+    daily[fd.date] = { hi: d.maxtemp_f, lo: d.mintemp_f, pop: pop(d), cat: catFromText(d.condition?.text), text: d.condition?.text };
+    for (const h of fd.hour || []) hourly.push({ t: h.time_epoch * 1000, temp: h.temp_f, pop: pop(h), cat: catFromText(h.condition?.text), text: h.condition?.text, night: h.is_day === 0, wind: h.wind_mph });
+  }
+  return { current, hourly, daily, note: "Free plan: 3-day forecast" };
+}
+
 export const SOURCES = [
   { id: "nws",       name: "National Weather Service", short: "NWS",        site: "https://www.weather.gov", color: "var(--s1)", fetch: fetchNWS },
   { id: "openmeteo", name: "Open-Meteo",               short: "Open-Meteo", site: "https://open-meteo.com",  color: "var(--s2)", fetch: fetchOpenMeteo },
   { id: "metno",     name: "MET Norway (Yr)",          short: "Yr",         site: "https://www.yr.no",       color: "var(--s3)", fetch: fetchMetNo },
   { id: "pirate",    name: "Pirate Weather",           short: "Pirate",     site: "https://pirateweather.net", color: "var(--s4)", fetch: fetchPirate,
     key: { env: "PIRATE_KEY", signup: "https://pirate-weather.apiable.io" } },
+  { id: "tomorrow",  name: "Tomorrow.io",              short: "Tomorrow",   site: "https://www.tomorrow.io", color: "var(--s5)", fetch: fetchTomorrow,
+    key: { env: "TOMORROW_KEY", signup: "https://app.tomorrow.io/development/keys" } },
+  { id: "weatherapi", name: "WeatherAPI.com",          short: "WeatherAPI", site: "https://www.weatherapi.com", color: "var(--s6)", fetch: fetchWeatherAPI,
+    key: { env: "WEATHERAPI_KEY", signup: "https://www.weatherapi.com/my/" } },
 ];
