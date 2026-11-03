@@ -240,7 +240,10 @@ function makeModelFetch(m) {
       return { t: t * 1000, temp: T[i], pop: PP[i] ?? null, cat, text, night: DAY[i] === 0, wind: WS[i] };
     }));
     if (!hourly.length) throw new Error("model returned no data");
-    if (!isNum(current.temp)) { const h0 = hourly.find(x => x.t >= Date.now() - 3600e3) || hourly[0]; Object.assign(current, { temp: h0.temp, cat: h0.cat, text: h0.text, night: h0.night }); }
+    // With several models in one request, the "current" block is shared, so use each model's own current hour.
+    const h0 = [...hourly].reverse().find(x => x.t <= Date.now()) || hourly[0];
+    Object.assign(current, { temp: h0.temp, cat: h0.cat, text: h0.text, night: h0.night, wind: h0.wind, observedAt: Date.now() });
+    if (!isNum(pick(c, "temperature_2m")) || !(`temperature_2m_${m.model}` in c)) { current.feels = null; current.humidity = null; current.windDir = null; }
     const d = j.daily || {};
     const daily = {};
     (d.time || []).forEach((t, i) => {

@@ -23,7 +23,9 @@ export const SET_HOUR = 6;
 export const LEADS = [0, 1, 2];
 const LOCATIONS = [PRESETS.vallejo, PRESETS.napa];
 // Observation stations to try first; the nearest NWS stations for the point are tried after these.
-const STATION_PREF = { napa: ["KAPC"], vallejo: [] };
+// Vallejo has no NWS station of its own; Napa County Airport (KAPC) is ~7.5 mi away, much closer
+// (and more similar) than Travis AFB (KSUU, ~20 mi inland), which NWS lists first for Vallejo.
+const STATION_PREF = { napa: ["KAPC"], vallejo: ["KAPC"] };
 const SITE = "https://wackywombacl.github.io/weather-compare/";
 
 const r1 = v => isNum(v) ? Math.round(v * 10) / 10 : null;
