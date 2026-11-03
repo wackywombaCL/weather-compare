@@ -455,7 +455,7 @@ function renderHourly() {
     if (k !== lastDay) { dayCells.push({ label: i === 0 ? "Today" : fmtDayLong(t, tz), span: 0 }); lastDay = k; }
     dayCells[dayCells.length - 1].span++;
   });
-  const head1 = `<tr class="dayrow"><th></th>` + dayCells.map(d => `<th colspan="${d.span}">${esc(d.label)}</th>`).join("") + `</tr>`;
+  const head1 = `<tr class="dayrow"><th></th>` + dayCells.map(d => `<th colspan="${d.span}"><span class="daylbl">${esc(d.label)}</span></th>`).join("") + `</tr>`;
   let prev = null;
   const newDay = grid.map(t => { const k = dayKey(t, tz); const nd = prev !== null && k !== prev; prev = k; return nd; });
   const head2 = `<tr><th></th>` + grid.map((t, i) => `<th class="${newDay[i] ? "newday" : ""}">${i === 0 ? "Now" : esc(fmtHour(t, tz))}</th>`).join("") + `</tr>`;
@@ -490,6 +490,11 @@ function renderHourly() {
     body += row(s.id, t => maps[s.id]?.get(t)) + `</tr>`;
   }
   $("hourlyTable").innerHTML = `<thead>${head1}${head2}</thead><tbody>${body}</tbody>`;
+  // Day labels stick just right of the pinned source-name column while scrolling sideways.
+  const nameCol = $("hourlyTable").querySelector("tbody th");
+  if (nameCol) $("hourlyTable").style.setProperty("--namecol", nameCol.offsetWidth + "px");
+  const row1 = $("hourlyTable").querySelector("thead tr");
+  if (row1) $("hourlyTable").style.setProperty("--row1", row1.offsetHeight + "px");
 }
 
 // ---------- Line chart (inline SVG) ----------

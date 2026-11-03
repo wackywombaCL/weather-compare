@@ -324,3 +324,17 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .basemap { filter: saturate(.35) brightness(1.05); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .basemap { filter: invert(1) hue-rotate(180deg) brightness(.85) saturate(.3); } }
 :root[data-theme="dark"] .basemap { filter: invert(1) hue-rotate(180deg) brightness(.85) saturate(.3); }
+
+/* Tables that scroll in their own box: the time/date header stays pinned at the top and the
+   source names at the left, so you always know which hour and which source you're looking at. */
+.tablebox { max-height: min(78vh, 980px); overflow: auto; padding: 0; -webkit-overflow-scrolling: touch; }
+.tablebox tbody th, .tablebox thead th:first-child { padding-left: 14px; }
+.tablebox tbody th { box-shadow: inset -1px 0 0 var(--border); }
+.tablebox thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+.tablebox thead tr + tr th { top: var(--row1, 26px); }
+.tablebox thead th:first-child { left: 0; z-index: 4; }
+.tablebox tbody th { z-index: 3; }
+.tablebox tr.avgrow th { background: var(--surface-2); }
+.tablebox thead tr:last-child th { box-shadow: inset 0 -1px 0 var(--border); }
+.hourly .dayrow th { height: 26px; padding-top: 8px; }
+.hourly .daylbl { position: sticky; left: calc(var(--namecol, 120px) + 8px); display: inline-block; }
