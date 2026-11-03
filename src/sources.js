@@ -19,17 +19,33 @@ export function setRequestInit(init) { requestInit = init || {}; }
 // The page reads keys saved on the device (Settings); the daily job reads GitHub secrets.
 let keyProvider = () => null;
 export function setKeyProvider(fn) { keyProvider = fn; }
-const needKey = id => {
+// Key proxy (Cloudflare Worker, see worker/index.js): used for a keyed source when this device
+// has no key of its own for it but has the access code.
+let proxy = null;
+export function setProxy(p) { proxy = p?.url && p?.code ? { url: p.url.replace(/\/$/, ""), code: p.code } : null; }
+export const proxyActive = () => !!proxy;
+// Fetch a keyed source: directly with this device's key, or through the proxy.
+async function keyedJSON(id, direct, route, params, opts = {}) {
   const k = (keyProvider(id) || "").trim();
-  if (!k) throw Object.assign(new Error("Needs an API key"), { friendly: true, nokey: true });
-  return k;
-};
+  if (k) return getJSON(direct(encodeURIComponent(k)), opts);
+  if (proxy) {
+    try {
+      return await getJSON(`${proxy.url}/v1/${route}?` + new URLSearchParams(params), { ...opts, headers: { "X-Access-Code": proxy.code } });
+    } catch (e) {
+      if (e.status === 401) throw Object.assign(new Error("Access code was rejected. Check it in ⚙️ Settings."), { friendly: true });
+      if (e.status === 501) throw Object.assign(new Error("No key for this source on the server yet"), { friendly: true });
+      throw e;
+    }
+  }
+  throw Object.assign(new Error("Needs an API key"), { friendly: true, nokey: true });
+}
+const ll = loc => ({ lat: (+loc.lat).toFixed(4), lon: (+loc.lon).toFixed(4) });
 
-export async function getJSON(url, { signal, tries = 2 } = {}) {
+export async function getJSON(url, { signal, tries = 2, headers } = {}) {
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try {
-      const r = await fetch(url, { ...requestInit, signal });
+      const r = await fetch(url, { ...requestInit, signal, ...(headers ? { headers: { ...(requestInit.headers || {}), ...headers } } : {}) });
       if (!r.ok) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
       return await r.json();
     } catch (e) {
@@ -390,10 +406,10 @@ function darkSkyIcon(ic = "", sm = "") {
 }
 
 async function fetchVisualCrossing(loc, signal) {
-  const key = needKey("visualcrossing");
   const tz = loc.tz;
   const from = dayKey(Date.now(), tz), to = dayKey(Date.now() + 4 * 24 * 3600e3, tz);
-  const j = await getJSON(`https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}/${from}/${to}?unitGroup=us&include=days,hours,current&contentType=json&key=${encodeURIComponent(key)}`, { signal, tries: 1 });
+  const j = await keyedJSON("visualcrossing", k => `https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}/${from}/${to}?unitGroup=us&include=days,hours,current&contentType=json&key=${k}`,
+    "visualcrossing", { ...ll(loc), from, to }, { signal, tries: 1 });
   const c = j.currentConditions || {}, cc = darkSkyIcon(c.icon, c.conditions);
   const current = {
     temp: c.temp, feels: c.feelslike, humidity: c.humidity, wind: c.windspeed, windDir: c.winddir,
@@ -427,12 +443,11 @@ function owmCat(id) {
   return "cloudy";
 }
 async function fetchOWM(loc, signal) {
-  const key = needKey("owm");
-  const q = `lat=${(+loc.lat).toFixed(4)}&lon=${(+loc.lon).toFixed(4)}&units=imperial&appid=${encodeURIComponent(key)}`;
+  const q = k => `lat=${(+loc.lat).toFixed(4)}&lon=${(+loc.lon).toFixed(4)}&units=imperial&appid=${k}`;
   // Free plan: current weather + 5-day forecast in 3-hour steps (two requests).
   const [cw, fc] = await Promise.all([
-    getJSON(`https://api.openweathermap.org/data/2.5/weather?${q}`, { signal }),
-    getJSON(`https://api.openweathermap.org/data/2.5/forecast?${q}`, { signal }),
+    keyedJSON("owm", k => `https://api.openweathermap.org/data/2.5/weather?${q(k)}`, "owm/weather", ll(loc), { signal }),
+    keyedJSON("owm", k => `https://api.openweathermap.org/data/2.5/forecast?${q(k)}`, "owm/forecast", ll(loc), { signal }),
   ]);
   const tz = loc.tz;
   const w0 = cw.weather?.[0] || {};
@@ -471,8 +486,7 @@ async function fetchOWM(loc, signal) {
 }
 
 async function fetchPirate(loc, signal) {
-  const key = needKey("pirate");
-  const j = await getJSON(`https://api.pirateweather.net/forecast/${encodeURIComponent(key)}/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}?units=us&extend=hourly&exclude=minutely,alerts`, { signal });
+  const j = await keyedJSON("pirate", k => `https://api.pirateweather.net/forecast/${k}/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}?units=us&extend=hourly&exclude=minutely,alerts`, "pirate", ll(loc), { signal });
   const tz = loc.tz || j.timezone;
   const conv = x => darkSkyIcon(x.icon, x.summary);
   const c = j.currently, cc = conv(c);
@@ -508,9 +522,8 @@ const TIO = {
   8000: ["thunder", "Thunderstorm"],
 };
 async function fetchTomorrow(loc, signal) {
-  const key = needKey("tomorrow");
   // One request (free plan: 25/hour, 500/day): hourly for the next 5 days plus daily summaries.
-  const j = await getJSON(`https://api.tomorrow.io/v4/weather/forecast?location=${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}&units=imperial&timesteps=1h,1d&apikey=${encodeURIComponent(key)}`, { signal, tries: 1 });
+  const j = await keyedJSON("tomorrow", k => `https://api.tomorrow.io/v4/weather/forecast?location=${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}&units=imperial&timesteps=1h,1d&apikey=${k}`, "tomorrow", ll(loc), { signal, tries: 1 });
   const tz = loc.tz;
   const days = j.timelines?.daily || [];
   // Night = outside sunrise..sunset of that local day (Tomorrow's hourly codes have no day/night flag).
@@ -538,8 +551,7 @@ async function fetchTomorrow(loc, signal) {
 }
 
 async function fetchWeatherAPI(loc, signal) {
-  const key = needKey("weatherapi");
-  const j = await getJSON(`https://api.weatherapi.com/v1/forecast.json?key=${encodeURIComponent(key)}&q=${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}&days=5&aqi=no&alerts=no`, { signal });
+  const j = await keyedJSON("weatherapi", k => `https://api.weatherapi.com/v1/forecast.json?key=${k}&q=${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}&days=5&aqi=no&alerts=no`, "weatherapi", ll(loc), { signal });
   const c = j.current;
   const pop = x => { const v = [x.chance_of_rain, x.chance_of_snow, x.daily_chance_of_rain, x.daily_chance_of_snow].map(Number).filter(isNum); return v.length ? Math.max(...v) : null; };
   const current = {

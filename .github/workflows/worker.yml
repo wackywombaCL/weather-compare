@@ -1,0 +1,54 @@
+name: Deploy key server
+
+# Installs/updates the Cloudflare Worker in worker/ that holds the API keys for the app.
+# Needs secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, plus ACCESS_CODE and the
+# API keys (PIRATE_KEY, TOMORROW_KEY, WEATHERAPI_KEY, VISUALCROSSING_KEY, OWM_KEY).
+# Runs when worker/ changes; run it by hand after changing a key or the access code.
+on:
+  push:
+    branches: [main]
+    paths: ["worker/**", ".github/workflows/worker.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Cloudflare setup
+        id: cf
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CODE: ${{ secrets.ACCESS_CODE }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$ACCOUNT" ] || [ -z "$CODE" ]; then
+            echo "::notice::Key server not deployed: add the CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and ACCESS_CODE secrets first."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy Worker
+        if: steps.cf.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          secrets: |
+            ACCESS_CODE
+            PIRATE_KEY
+            TOMORROW_KEY
+            WEATHERAPI_KEY
+            VISUALCROSSING_KEY
+            OWM_KEY
+        env:
+          ACCESS_CODE: ${{ secrets.ACCESS_CODE }}
+          PIRATE_KEY: ${{ secrets.PIRATE_KEY }}
+          TOMORROW_KEY: ${{ secrets.TOMORROW_KEY }}
+          WEATHERAPI_KEY: ${{ secrets.WEATHERAPI_KEY }}
+          VISUALCROSSING_KEY: ${{ secrets.VISUALCROSSING_KEY }}
+          OWM_KEY: ${{ secrets.OWM_KEY }}

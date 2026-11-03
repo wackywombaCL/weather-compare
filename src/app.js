@@ -1,4 +1,5 @@
-import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
+import { PROXY_URL } from "./config.js";
+import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, setProxy, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
 import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS } from "./skill.js";
 import { initAccuracy, renderAccuracy, accData } from "./accuracy.js";
 
@@ -26,6 +27,13 @@ export const state = {
 };
 const getKeys = () => store.get("wc.keys", {});
 setKeyProvider(id => getKeys()[id]);
+// Access code for the shared key server. A link like …/#code=XXXX saves it on this device.
+{
+  const m = location.hash.match(/(?:^#|&)code=([^&]+)/);
+  if (m) { store.set("wc.code", decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname + location.search); }
+}
+const applyProxy = () => setProxy({ url: store.get("wc.proxyUrl", "") || PROXY_URL, code: store.get("wc.code", "") });
+applyProxy();
 
 // ---------- Formatting ----------
 export const $ = id => document.getElementById(id);
@@ -201,7 +209,7 @@ function renderCards() {
     const head = `<div class="src"><a href="${esc(s.site)}" target="_blank" rel="noopener">${esc(s.name)}</a>${badge(s.id, { compact: true })}</div>`;
     const cls = `card ${g ? "r-" + g.key : ""}`;
     if (r.status === "loading") return `<div class="${cls} loading">${head}<div class="big"><span class="t">··</span></div><div class="cond">Loading…</div></div>`;
-    if (r.status === "nokey") return `<div class="${cls} err">${head}<div class="cond">Needs an API key on this device.</div><button class="btn addkey" data-open-settings>⚙️ Add key</button></div>`;
+    if (r.status === "nokey") return `<div class="${cls} err">${head}<div class="cond">Needs an access code or API key on this device.</div><button class="btn addkey" data-open-settings>⚙️ Settings</button></div>`;
     if (r.status === "error") return `<div class="${cls} err">${head}<div class="big"><span class="t">—</span></div><div class="cond">${esc(r.error)}</div></div>`;
     const c = r.data.current, d = r.data.daily[today];
     return `<div class="${cls}">${head}
@@ -579,7 +587,13 @@ window.addEventListener("resize", () => {
 // ---------- Settings (API keys) ----------
 function openSettings() {
   const keys = getKeys();
-  $("keyRows").innerHTML = SOURCES.filter(s => s.key).map(s => `
+  const hasServer = !!(store.get("wc.proxyUrl", "") || PROXY_URL);
+  $("keyRows").innerHTML = (hasServer ? `
+    <div class="keyrow">
+      <label for="accessCode">Access code <span class="sub2">for the shared key server</span></label>
+      <input id="accessCode" type="password" autocomplete="off" spellcheck="false" placeholder="Paste access code" value="${esc(store.get("wc.code", ""))}">
+      <p class="hint" style="margin:6px 0 0">With the code, every source works without your own keys. Keys entered below are used instead, on this device only.</p>
+    </div><h3 style="font-size:14px;margin:16px 0 0">Your own API keys (optional)</h3>` : "") + SOURCES.filter(s => s.key).map(s => `
     <div class="keyrow">
       <label for="key_${s.id}">${esc(s.name)} <a href="${esc(s.key.signup)}" target="_blank" rel="noopener">Get a key ↗</a></label>
       <input id="key_${s.id}" data-id="${s.id}" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key" value="${esc(keys[s.id] || "")}">
@@ -594,8 +608,9 @@ $("settingsBtn").addEventListener("click", openSettings);
 $("settings").addEventListener("close", () => {
   if ($("settings").returnValue !== "save") return;
   const keys = getKeys();
-  $("keyRows").querySelectorAll("input").forEach(i => { const v = i.value.trim(); if (v) keys[i.dataset.id] = v; else delete keys[i.dataset.id]; });
+  $("keyRows").querySelectorAll("input[data-id]").forEach(i => { const v = i.value.trim(); if (v) keys[i.dataset.id] = v; else delete keys[i.dataset.id]; });
   store.set("wc.keys", keys);
+  if ($("accessCode")) { store.set("wc.code", $("accessCode").value.trim()); applyProxy(); }
   loadAll(true);
 });
 

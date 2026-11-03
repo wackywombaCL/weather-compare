@@ -1,9 +1,9 @@
 // Service worker: makes the home-screen app open fast and keep working offline.
 // Everything is "network first": when online you always get fresh code and weather; when the
 // network is slow or gone, the last saved copy is used instead.
-const SHELL = "wc-shell-v3";
+const SHELL = "wc-shell-v4";
 const API = "wc-api-v1";
-const SHELL_FILES = ["./", "index.html", "styles.css", "src/app.js", "src/sources.js", "src/accuracy.js", "src/skill.js", "src/radar.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css",
+const SHELL_FILES = ["./", "index.html", "styles.css", "src/app.js", "src/sources.js", "src/accuracy.js", "src/skill.js", "src/radar.js", "src/config.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css",
   "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {

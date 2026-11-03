@@ -1,0 +1,6 @@
+# Cloudflare Worker that holds the API keys for the weather app (see worker/index.js).
+# Deployed by .github/workflows/worker.yml; keys and the access code are Worker secrets.
+name = "weather-compare-proxy"
+main = "index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
