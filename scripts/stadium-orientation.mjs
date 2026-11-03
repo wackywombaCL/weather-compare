@@ -3,15 +3,22 @@
 // Run by hand (Actions → "Stadium orientation"); the results are copied into src/stadiums.js.
 import { STADIUMS } from "../src/stadiums.js";
 
-const OVERPASS = "https://overpass-api.de/api/interpreter";
+const ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
+const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY, "i") : null;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-for (const s of STADIUMS.filter(x => x.roof === "open")) {
+for (const s of STADIUMS.filter(x => x.roof === "open" && (!ONLY || ONLY.test(x.name)))) {
   const q = `[out:json][timeout:25];way(around:450,${s.lat},${s.lon})["leisure"="pitch"];out geom tags;`;
-  let res;
-  try {
-    const r = await fetch(OVERPASS, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "User-Agent": "weather-compare/1.0 (github.com/wackywombaCL/weather-compare)", "Content-Type": "application/x-www-form-urlencoded" } });
-    res = await r.json();
-  } catch (e) { console.log(`${s.name}: query failed (${e.message})`); await sleep(3000); continue; }
+  let res = null, lastErr = "";
+  for (let attempt = 0; attempt < 6 && !res; attempt++) {
+    const url = ENDPOINTS[attempt % ENDPOINTS.length];
+    try {
+      const r = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "User-Agent": "weather-compare/1.0 (github.com/wackywombaCL/weather-compare)", "Content-Type": "application/x-www-form-urlencoded" } });
+      const text = await r.text();
+      if (!r.ok || !text.startsWith("{")) throw new Error(`HTTP ${r.status}`);
+      res = JSON.parse(text);
+    } catch (e) { lastErr = e.message; await sleep(4000 * (attempt + 1)); }
+  }
+  if (!res) { console.log(`${s.name}: query failed (${lastErr})`); continue; }
   const ways = (res.elements || []).filter(w => w.geometry?.length >= 4).map(w => {
     const lat0 = w.geometry[0].lat * Math.PI / 180;
     const pts = w.geometry.map(p => [(p.lon - s.lon) * 111320 * Math.cos(lat0), (p.lat - s.lat) * 110540]);   // metres east, north

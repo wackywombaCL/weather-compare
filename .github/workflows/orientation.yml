@@ -3,6 +3,10 @@ name: Stadium orientation
 # One-off helper: measures which way each open-air NFL field runs, from OpenStreetMap.
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Only stadiums whose name matches (regex), blank for all"
+        required: false
 
 permissions:
   contents: read
@@ -16,3 +20,5 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/stadium-orientation.mjs
+        env:
+          ONLY: ${{ inputs.only }}
