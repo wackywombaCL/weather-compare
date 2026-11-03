@@ -1,4 +1,4 @@
-name: Lightning and storm alerts
+name: Lightning, storm and NFL alerts
 
 # Every 5 minutes: lightning within 20 miles of Vallejo/Napa (GOES-West satellite) and any
 # National Weather Service alerts for either city. Sends phone alerts through ntfy.
@@ -30,11 +30,19 @@ jobs:
       - run: python scripts/lightning.py
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: NFL weather alerts (Sat 8pm, Sun 9am & 12:45pm PT, 1 h before Thu/Sat games)
+        run: node scripts/nfl-alerts.mjs
+        continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
       - name: Save lightning data (only when it changed)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/lightning.json
+          git add data/lightning.json data/nfl-alerts.json 2>/dev/null || git add data/lightning.json
           if git diff --cached --quiet; then echo "No change."; exit 0; fi
           git commit -m "Lightning data $(date -u +%H:%MZ)"
           for i in 1 2 3 4; do

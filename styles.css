@@ -384,3 +384,6 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
   .gtable .nw, .gtable .np { font-size: 11px; }
   .gtable .nf { font-size: 10px; }
 }
+.gtable .rel { color: var(--text-2); font-weight: 600; }
+.game .agree { margin-top: 3px; }
+.game .agree .conf { font-size: 11px; }
