@@ -130,7 +130,7 @@
       <details class="how">
         <summary>How scoring works</summary>
         <ul>
-          <li><b>Window:</b> each forecast is saved at 6am Pacific and covers 6am to 6am the next day. Observations come from the nearest National Weather Service station (Napa County Airport for Napa; the nearest reporting station for Vallejo, which has none of its own).</li>
+          <li><b>Window:</b> each forecast is saved at 6am Pacific and covers 6am to 6am the next day. Observations: Napa uses Napa County Airport. Vallejo has no official station, so its temperatures, wind and humidity are the average of three nearby bay-side stations (Hercules, Benicia and Cordelia; any one more than 4° off the others is dropped that hour), and its rain comes from Napa County Airport, the closest station that measures rain.</li>
           <li><b>High / low miss:</b> forecast highest and lowest hourly temperature in the window minus the observed highest and lowest.</li>
           <li><b>Hourly miss:</b> the average gap between the forecast and observed temperature, hour by hour, across the 24 hours.</li>
           <li><b>Rain:</b> a source “calls rain” when any hour shows rain, storms or snow, or a 50%+ chance. Observed rain is any station report of rain, drizzle, showers or storms. Hit = called and it rained; Miss = it rained without a call; False alarm = called but stayed dry.</li>

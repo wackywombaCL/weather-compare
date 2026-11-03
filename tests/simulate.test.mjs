@@ -124,8 +124,12 @@ check("average, smart average and (after 3 scored days) Best forecast are tracke
   assert.ok(!get(dk(2), "napa").src.best, "no Best before 3 scored days");
   assert.ok(get(dk(4), "napa").src.best?.ok, "Best scored on day 5");
 });
-check("Vallejo is scored against Napa County Airport (KAPC)", () => {
-  assert.equal(get(dk(2), "vallejo").station, "KAPC");
+check("Vallejo temps come from the local station average, rain from Napa airport; Napa uses KAPC", () => {
+  const v = get(dk(2), "vallejo");
+  assert.equal(v.station, "C0879+G7397+C6944");
+  assert.equal(v.obs.rainStation, "KAPC");
+  assert.equal(get(dk(1), "vallejo").obs.rained, true);
+  assert.equal(get(dk(2), "napa").station, "KAPC");
 });
 check("forecasts are saved once per day", () => {
   const files = readdirSync(path.join(dataDir, "forecasts")).sort();

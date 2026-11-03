@@ -26,6 +26,17 @@ const LOCATIONS = [PRESETS.vallejo, PRESETS.napa];
 // Vallejo has no NWS station of its own; Napa County Airport (KAPC) is ~7.5 mi away, much closer
 // (and more similar) than Travis AFB (KSUU, ~20 mi inland), which NWS lists first for Vallejo.
 const STATION_PREF = { napa: ["KAPC"], vallejo: ["KAPC"] };
+// Vallejo temperatures, wind and humidity come from an average of nearby bay-side stations
+// (CWOP personal stations, via the NWS feed), since Napa airport runs much colder on clear nights.
+// Rain still comes from KAPC: these stations don't report precipitation through the feed.
+const LOCAL_STATIONS = {
+  vallejo: [
+    { id: "C0879", name: "Hercules", lat: 38.029, lon: -122.276 },
+    { id: "G7397", name: "Benicia", lat: 38.081, lon: -122.148 },
+    { id: "C6944", name: "Cordelia", lat: 38.172, lon: -122.129 },
+  ],
+};
+const ROBUST = { temp: 4, wind: 8, hum: 15 };   // drop a station's value this far from the others' median
 const SITE = "https://wackywombacl.github.io/weather-compare/";
 
 const r1 = v => isNum(v) ? Math.round(v * 10) / 10 : null;
@@ -216,20 +227,25 @@ export async function stationCandidates(loc) {
   return list;
 }
 
-export async function fetchObservations(loc, win) {
-  for (const st of await stationCandidates(loc)) {
-    try {
-      const q = `start=${encodeURIComponent(new Date(win.start - 30 * 60e3).toISOString())}&end=${encodeURIComponent(new Date(win.end).toISOString())}`;
-      const j = await getJSON(`https://api.weather.gov/stations/${st.id}/observations?${q}`, { tries: 3 });
-      const obs = (j.features || []).map(f => f.properties).map(p => ({
+async function stationObs(id, win) {
+  const q = `start=${encodeURIComponent(new Date(win.start - 30 * 60e3).toISOString())}&end=${encodeURIComponent(new Date(win.end).toISOString())}`;
+  const j = await getJSON(`https://api.weather.gov/stations/${id}/observations?${q}`, { tries: 3 });
+  return (j.features || []).map(f => f.properties).map(p => ({
         t: Date.parse(p.timestamp),
         temp: isNum(p.temperature?.value) && p.temperature?.qualityControl !== "X" ? cToF(p.temperature.value) : null,
         precip: isNum(p.precipitationLastHour?.value) ? p.precipitationLastHour.value : null, // mm
         wind: isNum(p.windSpeed?.value) ? p.windSpeed.value / 1.609 : null,                   // km/h -> mph
         hum: isNum(p.relativeHumidity?.value) ? p.relativeHumidity.value : null,             // %
         text: p.textDescription || "",
-        present: (p.presentWeather || []).map(w => w.weather || w.rawString || ""),
-      })).filter(o => isNum(o.t)).sort((a, b) => a.t - b.t);
+    present: (p.presentWeather || []).map(w => w.weather || w.rawString || ""),
+  })).filter(o => isNum(o.t)).sort((a, b) => a.t - b.t);
+}
+const enough = (obs, win) => obs.filter(o => o.t >= win.start && o.t < win.end && isNum(o.temp)).length >= Math.max(6, Math.floor((win.end - win.start) / 3600e3 * 0.65));
+
+export async function fetchObservations(loc, win) {
+  for (const st of await stationCandidates(loc)) {
+    try {
+      const obs = await stationObs(st.id, win);
       const inWin = obs.filter(o => o.t >= win.start && o.t < win.end);
       // Need temperature reports for at least ~2/3 of the window's hours.
       const need = Math.max(6, Math.floor((win.end - win.start) / 3600e3 * 0.65));
@@ -326,6 +342,45 @@ function normalize(snap) {
   return { ...snap, leads, locations };
 }
 
+// Mean of the values after dropping any more than `tol` from the median (one bad sensor can't skew it).
+function robustMean(vals, tol) {
+  const v = vals.filter(isNum).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const med = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+  const keep = v.filter(x => Math.abs(x - med) <= tol);
+  return r1(mean(keep.length ? keep : v));
+}
+// Observations for a location: one station, or (Vallejo) a local average with rain from KAPC.
+export async function getObservations(loc, win) {
+  const base = await fetchObservations(loc, win);
+  if (!base) return null;
+  const baseOb = summarizeObs(base.obs, win);
+  const locals = LOCAL_STATIONS[loc.id];
+  if (!locals) return { station: base.station, ob: baseOb };
+  const parts = [];
+  for (const st of locals) {
+    try { const obs = await stationObs(st.id, win); if (enough(obs, win)) parts.push({ st, ob: summarizeObs(obs, win) }); } catch {}
+  }
+  if (parts.length < 2) {
+    return { station: { ...base.station, name: `${base.station.name || base.station.id} (local stations unavailable)` }, ob: baseOb };
+  }
+  const n = baseOb.hours.length;
+  const per = (k, tol) => Array.from({ length: n }, (_, i) => robustMean(parts.map(p => p.ob[k]?.[i]), tol));
+  const ob = {
+    ...baseOb,                                   // rain: yes/no, start, total from the rain station
+    hi: robustMean(parts.map(p => p.ob.hi), ROBUST.temp),
+    lo: robustMean(parts.map(p => p.ob.lo), ROBUST.temp),
+    n: Math.min(...parts.map(p => p.ob.n)),
+    hours: per("hours", ROBUST.temp),
+    wind: per("wind", ROBUST.wind),
+    hum: per("hum", ROBUST.hum),
+    parts: Object.fromEntries(parts.map(p => [p.st.id, { hi: p.ob.hi, lo: p.ob.lo }])),
+    rainStation: base.station.id,
+  };
+  const mi = r1(mean(parts.map(p => miles([loc.lat, loc.lon], [p.st.lat, p.st.lon]))));
+  return { station: { id: parts.map(p => p.st.id).join("+"), name: `${parts.map(p => p.st.name).join(", ")} average; rain from ${base.station.id}`, mi }, ob };
+}
+
 // ---------- 3. Alerts ----------
 async function notify({ title, body, tags }, log) {
   const topic = process.env.NTFY_TOPIC;
@@ -407,7 +462,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
         if (scores.days.some(d => d.date === lead.date && d.loc === loc.id && (d.lead ?? 0) === L)) continue;
         log(`Scoring ${lead.date} ${loc.id} (lead ${L}, set ${snap.date})…`);
         const ck = `${loc.id}|${win.start}|${win.end}`;
-        if (!obsCache.has(ck)) obsCache.set(ck, await fetchObservations(loc, win));
+        if (!obsCache.has(ck)) obsCache.set(ck, await getObservations(loc, win));
         const got = obsCache.get(ck);
         if (!got) {
           log(`  no usable observations yet`);
@@ -415,7 +470,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
           if (now - win.end > 3 * 3600e3 && !status.alerted[key]) { problems.push(`No usable station observations for ${loc.name} on ${lead.date}`); status.alerted[key] = now; }
           continue;
         }
-        const ob = summarizeObs(got.obs, win);
+        const ob = got.ob;
         const src = {};
         for (const [id, fc] of Object.entries(Lc.sources)) if (fc.ok && fc.leads?.[L]) src[id] = scoreSource(fc.leads[L], ob, win);
         scores.days.push({ date: lead.date, setDate: snap.date, lead: L, loc: loc.id, station: got.station.id, stationName: got.station.name || null, stationMi: got.station.mi,

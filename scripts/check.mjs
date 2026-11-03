@@ -1,7 +1,7 @@
 // Quick live check of every source for Vallejo. Run by .github/workflows/check.yml.
 // Prints what each source returned (never the keys) so problems are easy to spot.
 import { SOURCES, PRESETS, setRequestInit, setKeyProvider, setProxy, dayKey, getJSON, cToF } from "../src/sources.js";
-import { stationCandidates } from "./daily.mjs";
+import { stationCandidates, getObservations, windowFor, TZ } from "./daily.mjs";
 
 setKeyProvider(id => { const s = SOURCES.find(x => x.id === id); return s?.key ? process.env[s.key.env] : null; });
 setRequestInit({ headers: { "User-Agent": `weather-compare/1.0 (github.com/${process.env.GITHUB_REPOSITORY || "personal"})`, Accept: "application/geo+json, application/json" } });
@@ -55,6 +55,17 @@ if (PROXY_URL && process.env.ACCESS_CODE) {
     let latest = "";
     try { const ob = (await getJSON(`https://api.weather.gov/stations/${x.id}/observations/latest`, { tries: 1 })).properties; latest = `latest ${Math.round((Date.now() - Date.parse(ob.timestamp)) / 60000)} min ago, ${ob.temperature?.value == null ? "no temp" : Math.round(cToF(ob.temperature.value)) + "°F"}`; } catch (e) { latest = "no recent data"; }
     console.log(`  ${x.id.padEnd(8)} ${x.d.toFixed(1)} mi  ${x.name} — ${latest}`);
+  }
+}
+
+// Vallejo local-station average vs Napa airport for the last full 6am→6am day.
+{
+  const win = windowFor(dayKey(Date.now() - 30 * 3600e3, TZ));
+  for (const l of [PRESETS.vallejo, PRESETS.napa]) {
+    const got = await getObservations(l, win);
+    if (!got) { console.log(`\n${l.name}: no observations`); continue; }
+    const o = got.ob;
+    console.log(`\n${l.name} ${dayKey(win.start, TZ)} 6am→6am: ${got.station.id} (${got.station.name}${got.station.mi ? ", " + got.station.mi + " mi" : ""}) high ${o.hi}° low ${o.lo}° rain ${o.rained ? "yes " + (o.precipIn ?? "") + "in" : "no"}${o.parts ? " | per station: " + Object.entries(o.parts).map(([id, p]) => `${id} ${p.hi}/${p.lo}`).join(", ") : ""}`);
   }
 }
 
