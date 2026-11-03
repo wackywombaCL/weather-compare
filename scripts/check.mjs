@@ -1,6 +1,6 @@
 // Quick live check of every source for Vallejo. Run by .github/workflows/check.yml.
 // Prints what each source returned (never the keys) so problems are easy to spot.
-import { SOURCES, PRESETS, setRequestInit, setKeyProvider, dayKey, getJSON, cToF } from "../src/sources.js";
+import { SOURCES, PRESETS, setRequestInit, setKeyProvider, setProxy, dayKey, getJSON, cToF } from "../src/sources.js";
 import { stationCandidates } from "./daily.mjs";
 
 setKeyProvider(id => { const s = SOURCES.find(x => x.id === id); return s?.key ? process.env[s.key.env] : null; });
@@ -28,6 +28,19 @@ for (const s of SOURCES) {
     console.log(`✗ ${s.name}: ${e.message}${e.status ? ` (HTTP ${e.status})` : ""}`);
   }
 }
+// Shared key server (Cloudflare Worker): every keyed source through it, as a friend's phone would.
+import { PROXY_URL } from "../src/config.js";
+if (PROXY_URL && process.env.ACCESS_CODE) {
+  console.log(`\nKey server ${PROXY_URL}:`);
+  setKeyProvider(() => null);                         // no local keys: force the server
+  setProxy({ url: PROXY_URL, code: process.env.ACCESS_CODE });
+  for (const s of SOURCES.filter(x => x.key)) {
+    try { const d = await s.fetch(PRESETS.napa); console.log(`  ✓ ${s.name} via server: now ${Math.round(d.current.temp)}°F, ${d.hourly.length} hours`); }
+    catch (e) { failed++; console.log(`  ✗ ${s.name} via server: ${e.message}`); }
+  }
+  try { const r = await fetch(`${PROXY_URL}/v1/pirate?lat=38.3&lon=-122.29`, { headers: { "X-Access-Code": "wrong" } }); console.log(`  wrong code is rejected: ${r.status === 401 ? "yes" : "NO (HTTP " + r.status + ")"}`); } catch (e) { console.log("  wrong-code test failed:", e.message); }
+}
+
 // Nearby observation stations: which ones report, and how far away they are.
 for (const l of [PRESETS.vallejo, PRESETS.napa]) {
   console.log(`\nStations near ${l.name}:`);
