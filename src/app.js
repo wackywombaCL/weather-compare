@@ -1,9 +1,11 @@
 import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
-import { initAccuracy, renderAccuracy } from "./accuracy.js";
+import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT } from "./skill.js";
+import { initAccuracy, renderAccuracy, accData } from "./accuracy.js";
 
 const HOURS = 30;
 const DAYS = 5;
 const REFRESH_MS = 15 * 60 * 1000;
+const MAX_SELECTED = 4;
 
 // ---------- Storage (best effort) ----------
 export const store = {
@@ -15,12 +17,13 @@ export const store = {
 export const state = {
   loc: store.get("wc.loc", PRESETS.vallejo),
   units: store.get("wc.units", "F"),
+  avgMode: store.get("wc.avgMode", "smart"),
+  sel: store.get("wc.sel", []),           // sources drawn on charts, in selection order
+  slots: store.get("wc.slots", {}),       // source id -> color slot (stable while selected)
   results: {},
   fetchedAt: null,
   run: 0,
 };
-
-// API keys entered in Settings, stored only on this device.
 const getKeys = () => store.get("wc.keys", {});
 setKeyProvider(id => getKeys()[id]);
 
@@ -28,7 +31,6 @@ setKeyProvider(id => getKeys()[id]);
 export const $ = id => document.getElementById(id);
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 export const T = f => !isNum(f) ? "—" : Math.round(state.units === "F" ? f : (f - 32) * 5 / 9) + "°";
-// A temperature difference (no offset when converting).
 export const D = (d, digits = 0) => { if (!isNum(d)) return "—"; const v = state.units === "F" ? d : d * 5 / 9; const r = +v.toFixed(digits); return (r > 0 ? "+" : r < 0 ? "−" : "") + Math.abs(r).toFixed(digits) + "°"; };
 export const A = (d, digits = 1) => !isNum(d) ? "—" : (state.units === "F" ? d : d * 5 / 9).toFixed(digits) + "°";
 const W = mph => !isNum(mph) ? "—" : state.units === "F" ? Math.round(mph) + " mph" : Math.round(mph * 1.609) + " km/h";
@@ -55,7 +57,61 @@ function nextDays(tz, n) {
   return out;
 }
 const hourGrid = () => { const t0 = Math.floor(Date.now() / 3600e3) * 3600e3; return Array.from({ length: HOURS }, (_, i) => t0 + i * 3600e3); };
-const cvt = f => !isNum(f) ? null : state.units === "F" ? f : (f - 32) * 5 / 9;
+export const cvt = f => !isNum(f) ? null : state.units === "F" ? f : (f - 32) * 5 / 9;
+export const srcName = id => SOURCES.find(s => s.id === id)?.name || accData()?.scores?.sources?.[id]?.name || id;
+export const srcShort = id => SOURCES.find(s => s.id === id)?.short || accData()?.scores?.sources?.[id]?.short || id;
+
+// ---------- Recent accuracy (green → red) ----------
+const trackedLocs = () => (state.loc.id === "vallejo" || state.loc.id === "napa") ? [state.loc.id] : null;
+let recentCache = null;
+export function recent() {
+  const days = accData()?.scores?.days;
+  if (!days) return { scores: {}, dates: [] };
+  const key = `${days.length}|${trackedLocs()}`;
+  if (recentCache?.key !== key) recentCache = { key, ...recentScores(days, { locs: trackedLocs(), lead: 0, n: 7 }) };
+  return recentCache;
+}
+export function badge(id, { compact = false } = {}) {
+  const r = recent().scores[id];
+  if (!r) return `<span class="badge b-none" title="No accuracy scores yet">${compact ? "new" : "Not scored yet"}</span>`;
+  const g = rating(r.score);
+  const where = trackedLocs() ? "" : " at Vallejo + Napa";
+  return `<span class="badge b-${g.key}" title="Accuracy score over the last ${r.n} scored day${r.n > 1 ? "s" : ""}${where} (0–100)"><i></i>${Math.round(r.score)}${compact ? "" : " · " + g.label}</span>`;
+}
+const recentScoreOf = id => recent().scores[id]?.score ?? -1;
+// Sources sorted best recent accuracy first; ones without keys last.
+function orderedSources() {
+  const rank = s => { const r = state.results[s.id]?.status; return r === "nokey" ? 3 : r === "error" ? 2 : 0; };
+  return [...SOURCES].sort((a, b) => rank(a) - rank(b) || recentScoreOf(b.id) - recentScoreOf(a.id) || SOURCES.indexOf(a) - SOURCES.indexOf(b));
+}
+
+// ---------- Plain vs smart average ----------
+function weightsFor(ids) {
+  if (state.avgMode !== "smart") return null;
+  return smartWeights(recentScores(accData()?.scores?.days || [], { locs: trackedLocs(), lead: 0, n: 14 }).scores, ids);
+}
+function wmean(pairs, weights) {   // pairs: [[id, value]]
+  const v = pairs.filter(([, x]) => isNum(x));
+  if (!v.length) return null;
+  if (!weights) return mean(v.map(([, x]) => x));
+  const w = v.map(([id]) => weights[id] ?? 0), tw = w.reduce((a, b) => a + b, 0);
+  return tw ? v.reduce((s, [, x], i) => s + x * w[i], 0) / tw : mean(v.map(([, x]) => x));
+}
+
+// ---------- Chart selection (tap a source to draw it; colors stick while selected) ----------
+export function isSelected(id) { return state.sel.includes(id); }
+export function slotOf(id) { return state.slots[id] ?? null; }
+export function toggleSel(id) {
+  if (isSelected(id)) { state.sel = state.sel.filter(x => x !== id); delete state.slots[id]; }
+  else {
+    if (state.sel.length >= MAX_SELECTED) { const drop = state.sel.shift(); delete state.slots[drop]; }
+    const used = new Set(Object.values(state.slots));
+    let k = 1; while (used.has(k)) k++;
+    state.sel.push(id); state.slots[id] = k;
+  }
+  store.set("wc.sel", state.sel); store.set("wc.slots", state.slots);
+}
+export const selColor = id => `var(--c${slotOf(id)})`;
 
 // ---------- Fetch orchestration ----------
 // Sources with API keys have tight free limits (Tomorrow.io: 25 requests/hour), so reuse a
@@ -85,6 +141,8 @@ async function loadAll(force = false) {
   const loc = state.loc;
   for (const s of SOURCES) state.results[s.id] = { status: "loading" };
   renderAll();
+  let pending = 0;
+  const flush = () => { if (!pending++) requestAnimationFrame(() => { pending = 0; if (run === state.run) renderAll(); }); };
   await Promise.all(SOURCES.map(async s => {
     try {
       const data = await fetchSource(s, loc, controller.signal, force);
@@ -96,14 +154,14 @@ async function loadAll(force = false) {
       console.warn(s.id, e);
       state.results[s.id] = { status: e.nokey ? "nokey" : "error", error: friendlyError(e) };
     }
-    renderAll();
+    flush();
   }));
-  if (run === state.run) { state.fetchedAt = Date.now(); renderStatus(); }
+  if (run === state.run) { state.fetchedAt = Date.now(); renderAll(); }
 }
-const okSources = () => SOURCES.filter(s => state.results[s.id]?.status === "ok");
+const okSources = () => orderedSources().filter(s => state.results[s.id]?.status === "ok");
 
 // ---------- Rendering ----------
-function renderAll() {
+export function renderAll() {
   renderHeader();
   renderStatus();
   renderCards();
@@ -124,68 +182,74 @@ function renderStatus() {
   const active = SOURCES.filter(s => state.results[s.id]?.status !== "nokey").length;
   const parts = [loading ? `Loading ${loading} source${loading > 1 ? "s" : ""}…` : `${n} of ${active} sources loaded`];
   if (state.fetchedAt) parts.push("Updated " + fmtTime(state.fetchedAt, Intl.DateTimeFormat().resolvedOptions().timeZone));
+  if (!navigator.onLine) parts.push("Offline: showing saved data");
   $("statusLine").innerHTML = parts.map(p => `<span>${esc(p)}</span>`).join("");
 }
 
 function renderCards() {
   const tz = state.loc.tz;
   const today = dayKey(Date.now(), tz);
-  $("cards").innerHTML = SOURCES.map(s => {
+  $("cards").innerHTML = orderedSources().map(s => {
     const r = state.results[s.id] || { status: "loading" };
-    const head = `<div class="src"><a href="${esc(s.site)}" target="_blank" rel="noopener">${esc(s.name)}</a>${r.status === "ok" ? `<span class="ago">${esc(ago(r.data.current.observedAt))}</span>` : ""}</div>`;
-    if (r.status === "loading") return `<div class="card loading" style="--c:${s.color}">${head}<div class="big"><span class="t">··</span></div><div class="cond">Loading…</div></div>`;
-    if (r.status === "nokey") return `<div class="card err" style="--c:${s.color}">${head}<div class="big"><span class="t">—</span></div><div class="cond">Needs an API key on this device.</div><button class="btn addkey" data-open-settings>⚙️ Add key</button></div>`;
-    if (r.status === "error") return `<div class="card err" style="--c:${s.color}">${head}<div class="big"><span class="t">—</span></div><div class="cond">${esc(r.error)}</div></div>`;
+    const rs = recent().scores[s.id], g = rs ? rating(rs.score) : null;
+    const head = `<div class="src"><a href="${esc(s.site)}" target="_blank" rel="noopener">${esc(s.name)}</a>${badge(s.id, { compact: true })}</div>`;
+    const cls = `card ${g ? "r-" + g.key : ""}`;
+    if (r.status === "loading") return `<div class="${cls} loading">${head}<div class="big"><span class="t">··</span></div><div class="cond">Loading…</div></div>`;
+    if (r.status === "nokey") return `<div class="${cls} err">${head}<div class="cond">Needs an API key on this device.</div><button class="btn addkey" data-open-settings>⚙️ Add key</button></div>`;
+    if (r.status === "error") return `<div class="${cls} err">${head}<div class="big"><span class="t">—</span></div><div class="cond">${esc(r.error)}</div></div>`;
     const c = r.data.current, d = r.data.daily[today];
-    return `<div class="card" style="--c:${s.color}">${head}
+    return `<div class="${cls}">${head}
       <div class="big"><span class="i" aria-hidden="true">${icon(c.cat, c.night)}</span><span class="t">${T(c.temp)}</span></div>
       <div class="cond">${esc(c.text)}</div>
-      <dl class="kv">
-        <dt>Feels like</dt><dd>${T(c.feels)}</dd>
-        <dt>Humidity</dt><dd>${P(c.humidity)}</dd>
-        <dt>Wind</dt><dd>${W(c.wind)} ${esc(dir(c.windDir))}</dd>
-        <dt>Today</dt><dd>${d ? `${T(d.hi)} / ${T(d.lo)}${d.partial ? " <span title='Rest of today only'>*</span>" : ""}` : "—"}</dd>
-        <dt>Source</dt><dd>${esc(r.data.note)}</dd>
-      </dl></div>`;
+      <div class="meta">Feels ${T(c.feels)} · ${P(c.humidity)} · ${W(c.wind)} ${esc(dir(c.windDir))}</div>
+      <div class="meta">Today ${d ? `${T(d.hi)} / ${T(d.lo)}${d.partial ? "*" : ""}` : "—"} · <span title="${esc(r.data.note)}">${esc(ago(c.observedAt))}</span></div>
+    </div>`;
   }).join("");
   $("cards").querySelectorAll("[data-open-settings]").forEach(b => b.addEventListener("click", openSettings));
-  $("pending").innerHTML = PENDING_SOURCES.length ? "Coming once you add API keys: " + PENDING_SOURCES.map(n => `<span class="chip">${esc(n)}</span>`).join("") : "";
+  const any = SOURCES.some(s => recent().scores[s.id]);
+  $("pending").innerHTML = (any ? `<span class="legendline">Accuracy over the last 7 scored days: ${["good", "warning", "serious", "critical"].map((k, i) => `<span class="badge b-${k}"><i></i>${["88+ Great", "80+ Good", "70+ Fair", "under 70 Poor"][i]}</span>`).join(" ")} · sorted best first</span>` : `<span class="legendline">Accuracy shading appears here once the first days are scored.</span>`) +
+    (PENDING_SOURCES.length ? " Coming once you add API keys: " + PENDING_SOURCES.map(n => `<span class="chip">${esc(n)}</span>`).join("") : "");
 }
 
 function renderAverage() {
   const ok = okSources(), tz = state.loc.tz;
+  const ids = ok.map(s => s.id);
+  const weights = weightsFor(ids);
+  const smartReady = !!smartWeights(recentScores(accData()?.scores?.days || [], { locs: trackedLocs(), lead: 0, n: 14 }).scores, ids);
+  document.querySelectorAll("#avgMode button").forEach(b => {
+    b.setAttribute("aria-pressed", String(b.dataset.mode === state.avgMode));
+  });
+  $("avgModeNote").textContent = state.avgMode === "smart"
+    ? (smartReady ? "Smart: sources that have been more accurate lately count more." : `Smart average starts once sources have ${MIN_DAYS_FOR_WEIGHT}+ scored days. Until then it's the plain average.`)
+    : "Plain: every source counts the same.";
   if (!ok.length) {
     const loading = SOURCES.some(s => state.results[s.id]?.status === "loading");
     $("avgNow").innerHTML = `<div class="cond">${loading ? "Waiting for data…" : "No sources available."}</div>`;
     $("avgDays").innerHTML = ""; $("avgChart").innerHTML = ""; $("avgLegend").innerHTML = "";
     return;
   }
-  const cur = ok.map(s => state.results[s.id].data.current);
-  const temps = cur.map(c => c.temp).filter(isNum);
-  const night = cur[0].night;
-  const cat = mode(cur.map(c => c.cat));
+  const cur = ok.map(s => [s.id, state.results[s.id].data.current]);
+  const temps = cur.map(([, c]) => c.temp).filter(isNum);
+  const night = cur[0][1].night;
+  const cat = mode(cur.map(([, c]) => c.cat));
   $("avgNow").innerHTML = `
     <div class="src" style="font-weight:600;font-size:14px">Now · ${ok.length} source${ok.length > 1 ? "s" : ""}</div>
-    <div class="big"><span class="i" aria-hidden="true">${icon(cat, night)}</span><span class="t">${T(mean(temps))}</span></div>
+    <div class="big"><span class="i" aria-hidden="true">${icon(cat, night)}</span><span class="t">${T(wmean(cur.map(([id, c]) => [id, c.temp]), weights))}</span></div>
     <div class="cond">${esc(catLabel(cat, night))}</div>
     <div class="spread">Range ${T(Math.min(...temps))} to ${T(Math.max(...temps))}</div>
-    <dl class="kv" style="margin-top:8px">
-      <dt>Feels like</dt><dd>${T(mean(cur.map(c => c.feels)))}</dd>
-      <dt>Humidity</dt><dd>${P(mean(cur.map(c => c.humidity)))}</dd>
-      <dt>Wind</dt><dd>${W(mean(cur.map(c => c.wind)))}</dd>
-    </dl>`;
+    <div class="meta" style="margin-top:6px">Feels ${T(wmean(cur.map(([id, c]) => [id, c.feels]), weights))} · ${P(wmean(cur.map(([id, c]) => [id, c.humidity]), weights))} · ${W(wmean(cur.map(([id, c]) => [id, c.wind]), weights))}</div>`;
 
   const nowHour = Math.floor(Date.now() / 3600e3) * 3600e3;
   $("avgDays").innerHTML = nextDays(tz, DAYS).map((d, i) => {
-    const ds = ok.map(s => state.results[s.id].data.daily[d.key]).filter(Boolean);
-    const his = ds.map(x => x.hi).filter(isNum), los = ds.map(x => x.lo).filter(isNum);
-    const c = mode(ds.map(x => x.cat));
-    const avgPop = mean(ds.map(x => x.pop));
-    const rain = isNum(avgPop) && avgPop > RAIN_SHOW_POP ? avgRainStart(ok, d.key, i === 0 ? nowHour : null) : null;
+    const ds = ok.map(s => [s.id, state.results[s.id].data.daily[d.key]]).filter(([, x]) => x);
+    const his = ds.map(([, x]) => x.hi).filter(isNum);
+    const c = mode(ds.map(([, x]) => x.cat));
+    const avgPop = wmean(ds.map(([id, x]) => [id, x.pop]), weights);
+    const rain = isNum(avgPop) && avgPop > RAIN_SHOW_POP ? avgRainStart(ok, d.key, i === 0 ? nowHour : null, weights) : null;
     return `<div class="day">
       <div class="dn">${i === 0 ? "Today" : fmtDay(d.ms, tz)}</div>
       <div class="di" aria-hidden="true">${ds.length ? icon(c, false) : ""}</div>
-      <div class="hl">${T(mean(his))} <span class="lo">${T(mean(los))}</span></div>
+      <div class="hl">${T(wmean(ds.map(([id, x]) => [id, x.hi]), weights))} <span class="lo">${T(wmean(ds.map(([id, x]) => [id, x.lo]), weights))}</span></div>
       <div class="pp">💧 ${P(avgPop)}</div>
       ${rain ? `<div class="rs" title="Average of when each source has rain starting (${rain.n} of ${rain.of} sources call for rain that day)">🌧️ ${rain.now ? "now" : "~" + esc(fmtTime(rain.t, tz))}<span class="rsn"> · ${rain.n}/${rain.of}</span></div>` : ""}
       <div class="rg" title="Range of highs across sources">${his.length > 1 ? `highs ${T(Math.min(...his))}–${T(Math.max(...his))}` : "&nbsp;"}</div>
@@ -193,21 +257,24 @@ function renderAverage() {
   }).join("");
 
   const grid = hourGrid();
-  const maps = ok.map(s => new Map(state.results[s.id].data.hourly.map(h => [h.t, h])));
-  const avg = [], lo = [], hi = [];
+  const maps = ok.map(s => [s.id, new Map(state.results[s.id].data.hourly.map(h => [h.t, h]))]);
+  const avg = [], lo = [], hi = [], pop = [];
   for (const t of grid) {
-    const v = maps.map(m => m.get(t)?.temp).filter(isNum);
-    avg.push(v.length ? mean(v) : null); lo.push(v.length ? Math.min(...v) : null); hi.push(v.length ? Math.max(...v) : null);
+    const v = maps.map(([id, m]) => [id, m.get(t)?.temp]).filter(([, x]) => isNum(x));
+    avg.push(v.length ? wmean(v, weights) : null);
+    lo.push(v.length ? Math.min(...v.map(x => x[1])) : null); hi.push(v.length ? Math.max(...v.map(x => x[1])) : null);
+    pop.push(wmean(maps.map(([id, m]) => [id, m.get(t)?.pop]), weights));
   }
-  const ser = [{ name: "Average", color: "var(--avg)", values: avg.map(cvt), band: [lo.map(cvt), hi.map(cvt)], extra: i => `<div class="row"><span>Range</span><span>${T(lo[i])} – ${T(hi[i])}</span></div>` }];
-  $("avgLegend").innerHTML = `<span><span class="sw" style="background:var(--avg)"></span>Average temperature</span>` + (ok.length > 1 ? `<span><span class="sw band"></span>Lowest–highest source</span>` : "");
-  lineChart($("avgChart"), grid, ser, { tz });
+  const label = state.avgMode === "smart" && smartReady ? "Smart average" : "Average";
+  const ser = [{ name: label, color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: [lo.map(cvt), hi.map(cvt)], extra: i => `<div class="row"><span>Range</span><span>${T(lo[i])} – ${T(hi[i])}</span></div>` }];
+  $("avgLegend").innerHTML = `<span><span class="sw" style="background:var(--avg)"></span>${label}</span>` + (ok.length > 1 ? `<span><span class="sw band"></span>Lowest–highest source</span>` : "") + `<span><span class="sw bar"></span>Rain chance</span>`;
+  lineChart($("avgChart"), grid, ser, { tz, bars: pop });
 }
 
 // Average rain start for a local day: each source's first rainy hour that day, averaged.
 // Only shown when the average rain chance for the day is above this.
 const RAIN_SHOW_POP = 40;
-function avgRainStart(ok, key, fromT) {
+function avgRainStart(ok, key, fromT, weights) {
   const tz = state.loc.tz;
   const start = fromT ?? localHourStart(key, 0, tz), end = localHourStart(dayKey(localHourStart(key, 12, tz) + 24 * 3600e3, tz), 0, tz);
   const starts = [];
@@ -217,24 +284,33 @@ function avgRainStart(ok, key, fromT) {
     if (hrs.length < 6) continue;          // source doesn't forecast hourly that far out
     of++;
     const r = hrs.find(isRainyHour);
-    if (r) starts.push(r.t);
+    if (r) starts.push([s.id, r.t]);
   }
   if (!starts.length) return null;
-  const t = Math.round(mean(starts) / 1800e3) * 1800e3;   // nearest half hour
+  const t = Math.round(wmean(starts, weights) / 1800e3) * 1800e3;   // nearest half hour
   return { t, now: fromT != null && t <= fromT, n: starts.length, of };
 }
 
 function renderDaily() {
   const tz = state.loc.tz, days = nextDays(tz, DAYS);
   const ok = okSources();
+  const weights = weightsFor(ok.map(s => s.id));
   let html = `<thead><tr><th></th>${days.map((d, i) => `<th>${i === 0 ? "Today" : esc(fmtDayLong(d.ms, tz))}</th>`).join("")}</tr></thead><tbody>`;
-  for (const s of SOURCES) {
-    const r = state.results[s.id];
-    html += `<tr><th style="--c:${s.color}"><span class="sw"></span>${esc(s.short)}</th>`;
-    if (r?.status !== "ok") {
-      html += `<td colspan="${DAYS}" class="cell na">${r?.error ? esc(r.error) : "Loading…"}</td></tr>`;
-      continue;
+  if (ok.length > 1) {
+    html += `<tr class="avgrow"><th>${state.avgMode === "smart" && weights ? "Smart average" : "Average"}</th>`;
+    for (const d of days) {
+      const ds = ok.map(s => [s.id, state.results[s.id].data.daily[d.key]]).filter(([, x]) => x);
+      html += `<td class="cell"><span class="ci" aria-hidden="true">${ds.length ? icon(mode(ds.map(([, x]) => x.cat)), false) : ""}</span>
+        <span class="ct">${T(wmean(ds.map(([id, x]) => [id, x.hi]), weights))} <span class="lo">${T(wmean(ds.map(([id, x]) => [id, x.lo]), weights))}</span></span>
+        <span class="cp">💧 ${P(wmean(ds.map(([id, x]) => [id, x.pop]), weights))}</span></td>`;
     }
+    html += `</tr>`;
+  }
+  for (const s of orderedSources()) {
+    const r = state.results[s.id];
+    if (r?.status === "nokey") continue;
+    html += `<tr><th><span class="nm">${esc(s.short)}</span>${badge(s.id, { compact: true })}</th>`;
+    if (r?.status !== "ok") { html += `<td colspan="${DAYS}" class="cell na">${r?.error ? esc(r.error) : "Loading…"}</td></tr>`; continue; }
     for (const d of days) {
       const x = r.data.daily[d.key];
       if (!x) { html += `<td class="cell na">—</td>`; continue; }
@@ -245,30 +321,36 @@ function renderDaily() {
     }
     html += `</tr>`;
   }
-  if (ok.length > 1) {
-    html += `<tr class="avgrow"><th>Average</th>`;
-    for (const d of days) {
-      const ds = ok.map(s => state.results[s.id].data.daily[d.key]).filter(Boolean);
-      html += `<td class="cell"><span class="ci" aria-hidden="true">${ds.length ? icon(mode(ds.map(x => x.cat)), false) : ""}</span>
-        <span class="ct">${T(mean(ds.map(x => x.hi)))} <span class="lo">${T(mean(ds.map(x => x.lo)))}</span></span>
-        <span class="cp">💧 ${P(mean(ds.map(x => x.pop)))}</span></td>`;
-    }
-    html += `</tr>`;
-  }
   $("dailyTable").innerHTML = html + `</tbody>`;
 }
 
+// ---------- Hourly: chart with tap-to-compare + a calmer table ----------
 function renderHourly() {
   const tz = state.loc.tz, grid = hourGrid(), ok = okSources();
-  const ser = ok.map(s => {
-    const m = new Map(state.results[s.id].data.hourly.map(h => [h.t, h]));
-    return { name: s.short, color: s.color, values: grid.map(t => cvt(m.get(t)?.temp)), pops: grid.map(t => m.get(t)?.pop) };
-  });
-  if (ok.length > 1) ser.push({ name: "Average", color: "var(--avg)", dash: true, values: grid.map((_, i) => mean(ser.map(x => x.values[i]))) });
-  $("hourLegend").innerHTML = ser.map(x => `<span><span class="sw${x.dash ? " dash" : ""}" style="background:${x.color}"></span>${esc(x.name)}</span>`).join("");
-  if (ok.length) lineChart($("hourChart"), grid, ser, { tz, directLabels: true, extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span style="color:var(--text-3)">💧${Math.round(x.pops[i])}%</span>` : "" });
-  else $("hourChart").innerHTML = "";
+  const weights = weightsFor(ok.map(s => s.id));
+  const maps = Object.fromEntries(ok.map(s => [s.id, new Map(state.results[s.id].data.hourly.map(h => [h.t, h]))]));
+  // Legend chips: every loaded source, best first; tap to draw it (up to 4 at once).
+  $("hourLegend").innerHTML = `<span class="chiphint">Tap to compare (up to ${MAX_SELECTED}):</span>` + ok.map(s => {
+    const on = isSelected(s.id);
+    return `<button class="schip${on ? " on" : ""}" data-sel="${s.id}" aria-pressed="${on}">${on ? `<span class="sw" style="background:${selColor(s.id)}"></span>` : ""}${esc(s.short)}${badge(s.id, { compact: true })}</button>`;
+  }).join("") + (state.sel.length ? `<button class="schip clear" data-clear>Clear</button>` : "");
+  $("hourLegend").querySelectorAll("[data-sel]").forEach(b => b.addEventListener("click", () => { toggleSel(b.dataset.sel); renderHourly(); renderAccuracy(); }));
+  $("hourLegend").querySelector("[data-clear]")?.addEventListener("click", () => { state.sel = []; state.slots = {}; store.set("wc.sel", []); store.set("wc.slots", {}); renderHourly(); renderAccuracy(); });
 
+  if (ok.length) {
+    const avg = grid.map(t => wmean(ok.map(s => [s.id, maps[s.id].get(t)?.temp]), weights));
+    const lo = grid.map(t => { const v = ok.map(s => maps[s.id].get(t)?.temp).filter(isNum); return v.length ? Math.min(...v) : null; });
+    const hi = grid.map(t => { const v = ok.map(s => maps[s.id].get(t)?.temp).filter(isNum); return v.length ? Math.max(...v) : null; });
+    const pop = grid.map(t => wmean(ok.map(s => [s.id, maps[s.id].get(t)?.pop]), weights));
+    const ser = [{ name: weights ? "Smart avg" : "Average", color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: ok.length > 1 ? [lo.map(cvt), hi.map(cvt)] : null }];
+    for (const id of state.sel) if (maps[id]) ser.push({ name: srcShort(id), color: selColor(id), values: grid.map(t => cvt(maps[id].get(t)?.temp)), pops: grid.map(t => maps[id].get(t)?.pop) });
+    lineChart($("hourChart"), grid, ser, { tz, bars: pop, directLabels: ser.length > 1, extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span class="tipp">💧${Math.round(x.pops[i])}%</span>` : "" });
+  } else $("hourChart").innerHTML = "";
+
+  // Table: best sources first; icons only when conditions change; rain chance only when 20%+.
+  const onlySel = state.sel.length && store.get("wc.tableSel", false);
+  $("tableMode").innerHTML = state.sel.length ? `<button class="schip${onlySel ? "" : " on"}" data-tm="all">All sources</button><button class="schip${onlySel ? " on" : ""}" data-tm="sel">Selected only</button>` : "";
+  $("tableMode").querySelectorAll("[data-tm]").forEach(b => b.addEventListener("click", () => { store.set("wc.tableSel", b.dataset.tm === "sel"); renderHourly(); }));
   const dayCells = []; let lastDay = null;
   grid.forEach((t, i) => {
     const k = dayKey(t, tz);
@@ -279,27 +361,47 @@ function renderHourly() {
   let prev = null;
   const newDay = grid.map(t => { const k = dayKey(t, tz); const nd = prev !== null && k !== prev; prev = k; return nd; });
   const head2 = `<tr><th></th>` + grid.map((t, i) => `<th class="${newDay[i] ? "newday" : ""}">${i === 0 ? "Now" : esc(fmtHour(t, tz))}</th>`).join("") + `</tr>`;
+  const row = (label, getH) => {
+    let lastCat = null;
+    return grid.map((t, i) => {
+      const h = getH(t);
+      if (!h || !isNum(h.temp)) return `<td class="cell na ${newDay[i] ? "newday" : ""}">—</td>`;
+      const key = h.cat + (h.night ? "n" : "");
+      const showIcon = key !== lastCat || i === 0; lastCat = key;
+      const wet = isNum(h.pop) && h.pop >= 20;
+      return `<td class="cell ${newDay[i] ? "newday" : ""}${isRainyHour(h) ? " wet" : ""}" title="${esc(h.text || catLabel(h.cat))}${isNum(h.pop) ? ` · ${Math.round(h.pop)}% rain` : ""}"><span class="ci" aria-hidden="true">${showIcon ? icon(h.cat, h.night) : ""}</span><span class="ct">${T(h.temp)}</span><span class="cp">${wet ? Math.round(h.pop) + "%" : ""}</span></td>`;
+    }).join("");
+  };
   let body = "";
-  for (const s of SOURCES) {
+  if (ok.length > 1) {
+    body += `<tr class="avgrow"><th>${weights ? "Smart avg" : "Average"}</th>` + row("avg", t => {
+      const hs = ok.map(s => [s.id, maps[s.id].get(t)]).filter(([, h]) => h);
+      if (!hs.length) return null;
+      const temp = wmean(hs.map(([id, h]) => [id, h.temp]), weights), pop = wmean(hs.map(([id, h]) => [id, h.pop]), weights);
+      const wet = hs.filter(([, h]) => isRainyHour(h)).length >= hs.length / 2;
+      return { temp, pop, cat: wet ? "rain" : mode(hs.map(([, h]) => h.cat)), night: hs[0][1].night, text: "" };
+    }) + `</tr>`;
+  }
+  for (const s of orderedSources()) {
     const r = state.results[s.id];
-    body += `<tr><th style="--c:${s.color}"><span class="sw"></span>${esc(s.short)}</th>`;
+    if (r?.status === "nokey" || (onlySel && !isSelected(s.id))) continue;
+    const sw = isSelected(s.id) ? `<span class="sw" style="background:${selColor(s.id)}"></span>` : "";
+    body += `<tr><th>${sw}<span class="nm">${esc(s.short)}</span>${badge(s.id, { compact: true })}</th>`;
     if (r?.status !== "ok") { body += `<td colspan="${HOURS}" class="cell na" style="text-align:left">${r?.error ? esc(r.error) : "Loading…"}</td></tr>`; continue; }
-    const m = new Map(r.data.hourly.map(h => [h.t, h]));
-    body += grid.map((t, i) => {
-      const h = m.get(t);
-      if (!h) return `<td class="cell na ${newDay[i] ? "newday" : ""}">—</td>`;
-      return `<td class="cell ${newDay[i] ? "newday" : ""}" title="${esc(h.text)} · wind ${esc(W(h.wind))}"><span class="ci" aria-hidden="true">${icon(h.cat, h.night)}</span><span class="ct">${T(h.temp)}</span><span class="cp">${isNum(h.pop) ? Math.round(h.pop) + "%" : "–"}</span></td>`;
-    }).join("") + `</tr>`;
+    body += row(s.id, t => maps[s.id]?.get(t)) + `</tr>`;
   }
   $("hourlyTable").innerHTML = `<thead>${head1}${head2}</thead><tbody>${body}</tbody>`;
 }
 
 // ---------- Line chart (inline SVG) ----------
-function lineChart(el, times, series, opts = {}) {
+// series: [{name, color, values, width?, dash?, band?: [lo[], hi[]], extra?(i)}]
+// opts: { tz, bars?: rain-chance % per point, markers?: [{t, label, dash}], startLabel?, directLabels?, extra?(series, i) }
+export function lineChart(el, times, series, opts = {}) {
   el._args = [times, series, opts];
   const W = Math.max(280, el.clientWidth || 600);
-  const H = W < 500 ? 200 : 240;
-  const m = { l: 34, r: opts.directLabels && W >= 480 ? 78 : 12, t: 12, b: 26 };
+  const barH = opts.bars ? 34 : 0;
+  const H = (W < 500 ? 190 : 230) + barH;
+  const m = { l: 34, r: opts.directLabels && W >= 480 ? 74 : 12, t: opts.markers?.length ? 22 : 12, b: 26 + (barH ? barH + 8 : 0) };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
   const all = [];
   for (const s of series) { all.push(...s.values.filter(isNum)); if (s.band) all.push(...s.band[0].filter(isNum), ...s.band[1].filter(isNum)); }
@@ -314,21 +416,39 @@ function lineChart(el, times, series, opts = {}) {
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Hourly temperature chart">`;
   for (let v = lo; v <= hi; v += step) svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}°</text>`;
   const tz = opts.tz;
+  const xLabelY = m.t + ih + 16;
   times.forEach((t, i) => {
     const hr = localHour(t, tz);
     if (i === 0 || hr % 6 === 0) {
       if (i !== 0 && i < 3) return;
-      const label = i === 0 ? "Now" : hr === 0 ? fmtDay(t, tz) : fmtHour(t, tz);
-      svg += `<text class="axis" x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? "start" : "middle"}"${hr === 0 ? ' style="font-weight:600;fill:var(--text-2)"' : ""}>${esc(label)}</text>`;
+      const label = i === 0 ? (opts.startLabel ?? "Now") : hr === 0 ? fmtDay(t, tz) : fmtHour(t, tz);
+      svg += `<text class="axis" x="${x(i)}" y="${xLabelY}" text-anchor="${i === 0 ? "start" : "middle"}"${hr === 0 ? ' style="font-weight:600;fill:var(--text-2)"' : ""}>${esc(label)}</text>`;
       if (hr === 0) svg += `<line class="grid" x1="${x(i)}" x2="${x(i)}" y1="${m.t}" y2="${m.t + ih}" stroke-dasharray="2 3"/>`;
     }
   });
+  if (barH) {
+    const by = m.t + ih + 24, bw = Math.max(2, iw / times.length - 2);
+    svg += `<text class="axis" x="${m.l - 6}" y="${by + barH / 2 + 4}" text-anchor="end">💧</text>`;
+    svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${by + barH}" y2="${by + barH}"/>`;
+    opts.bars.forEach((p, i) => {
+      if (!isNum(p) || p < 1) return;
+      const h = Math.max(1.5, p / 100 * barH);
+      svg += `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${(by + barH - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="var(--rain)" opacity="${(0.35 + 0.65 * p / 100).toFixed(2)}"/>`;
+    });
+  }
+  for (const mk of opts.markers || []) {
+    const i = (mk.t - times[0]) / 3600e3;
+    if (i < 0 || i > times.length - 1) continue;
+    const xx = m.l + i / (times.length - 1) * iw;
+    svg += `<line x1="${xx}" x2="${xx}" y1="${m.t - 4}" y2="${m.t + ih}" stroke="${mk.color || "var(--rain)"}" stroke-width="${mk.width || 1.5}"${mk.dash ? ` stroke-dasharray="${mk.dash}"` : ""}/>`;
+    if (mk.label) svg += `<text class="mk" x="${xx}" y="${m.t - 8}" text-anchor="middle">${esc(mk.label)}</text>`;
+  }
   for (const s of series) if (s.band) {
     const [bl, bh] = s.band;
     const idx = bl.map((v, i) => i).filter(i => isNum(bl[i]) && isNum(bh[i]));
     if (idx.length) svg += `<path d="${idx.map((i, k) => (k ? "L" : "M") + x(i) + "," + y(bh[i])).join("") + idx.slice().reverse().map(i => "L" + x(i) + "," + y(bl[i])).join("")}Z" fill="var(--band)"/>`;
   }
-  for (const s of series) svg += `<path d="${path(s.values)}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"${s.dash ? ' stroke-dasharray="5 4"' : ""}/>`;
+  for (const s of series) svg += `<path d="${path(s.values)}" fill="none" stroke="${s.color}" stroke-width="${s.width || 2}" stroke-linejoin="round" stroke-linecap="round"${s.dash ? ` stroke-dasharray="${s.dash === true ? "5 4" : s.dash}"` : ""}/>`;
   if (opts.directLabels && m.r > 20) {
     const ends = series.map(s => { let i = s.values.length - 1; while (i >= 0 && !isNum(s.values[i])) i--; return i >= 0 ? { s, yy: y(s.values[i]), i } : null; }).filter(Boolean).sort((a, b) => a.yy - b.yy);
     for (let k = 1; k < ends.length; k++) if (ends[k].yy - ends[k - 1].yy < 13) ends[k].yy = ends[k - 1].yy + 13;
@@ -345,7 +465,8 @@ function lineChart(el, times, series, opts = {}) {
     xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.style.display = "";
     dots.innerHTML = series.filter(s => isNum(s.values[i])).map(s => `<circle cx="${x(i)}" cy="${y(s.values[i])}" r="4.5" fill="${s.color}" stroke="var(--surface)" stroke-width="2"/>`).join("");
     tip.innerHTML = `<div class="tt">${esc(fmtDay(times[i], tz))} ${esc(fmtHour(times[i], tz))}</div>` +
-      series.map(s => `<div class="row"><span><span class="sw" style="background:${s.color}"></span>${esc(s.name)}</span><span>${isNum(s.values[i]) ? Math.round(s.values[i]) + "°" : "—"}${opts.extra ? opts.extra(s, i) : ""}</span></div>${s.extra ? s.extra(i) : ""}`).join("");
+      series.map(s => `<div class="row"><span><span class="sw" style="background:${s.color}"></span>${esc(s.name)}</span><span>${isNum(s.values[i]) ? Math.round(s.values[i]) + "°" : "—"}${opts.extra ? opts.extra(s, i) : ""}</span></div>${s.extra ? s.extra(i) : ""}`).join("") +
+      (opts.bars && isNum(opts.bars[i]) ? `<div class="row"><span>💧 Rain chance</span><span>${Math.round(opts.bars[i])}%</span></div>` : "");
     tip.style.display = "block";
     const sx = x(i) * (r.width / W), tw = tip.offsetWidth;
     tip.style.left = (sx + 14 + tw > r.width ? sx - 14 - tw : sx + 14) + "px";
@@ -360,7 +481,7 @@ function lineChart(el, times, series, opts = {}) {
 let rsz;
 window.addEventListener("resize", () => {
   clearTimeout(rsz);
-  rsz = setTimeout(() => ["avgChart", "hourChart"].forEach(id => { const el = $(id); if (el._args) lineChart(el, ...el._args); }), 150);
+  rsz = setTimeout(() => document.querySelectorAll(".chart").forEach(el => { if (el._args && el.offsetParent) lineChart(el, ...el._args); }), 150);
 });
 
 // ---------- Settings (API keys) ----------
@@ -370,7 +491,7 @@ function openSettings() {
     <div class="keyrow">
       <label for="key_${s.id}">${esc(s.name)} <a href="${esc(s.key.signup)}" target="_blank" rel="noopener">Get a key ↗</a></label>
       <input id="key_${s.id}" data-id="${s.id}" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key" value="${esc(keys[s.id] || "")}">
-    </div>`).join("") + (PENDING_SOURCES.length ? `<p class="hint" style="margin-top:14px">More sources (${esc(PENDING_SOURCES.join(", "))}) will appear here as they're added.</p>` : "");
+    </div>`).join("");
   $("keyRows").querySelectorAll("input").forEach(i => {
     i.addEventListener("focus", () => i.type = "text");
     i.addEventListener("blur", () => i.type = "password");
@@ -394,20 +515,21 @@ function showTab(name) {
   $("viewForecast").hidden = acc;
   $("viewAccuracy").hidden = !acc;
   if (location.hash !== (acc ? "#accuracy" : "")) history.replaceState(null, "", acc ? "#accuracy" : location.pathname + location.search);
-  if (acc) renderAccuracy();
+  if (acc) renderAccuracy(); else renderAll();
 }
 $("tabForecast").addEventListener("click", () => showTab("forecast"));
 $("tabAccuracy").addEventListener("click", () => showTab("accuracy"));
 
-// ---------- Location controls ----------
+// ---------- Controls ----------
 function setLocation(loc) {
   state.loc = loc;
   store.set("wc.loc", loc);
   loadAll();
 }
 document.querySelectorAll(".preset").forEach(b => b.addEventListener("click", () => setLocation({ ...PRESETS[b.dataset.preset] })));
-$("refreshBtn").addEventListener("click", () => { loadAll(true); initAccuracy(true); });
+$("refreshBtn").addEventListener("click", () => { loadAll(true); initAccuracy().then(renderAll); });
 $("unitBtn").addEventListener("click", () => { state.units = state.units === "F" ? "C" : "F"; store.set("wc.units", state.units); renderAll(); renderAccuracy(); });
+document.querySelectorAll("#avgMode button").forEach(b => b.addEventListener("click", () => { state.avgMode = b.dataset.mode; store.set("wc.avgMode", state.avgMode); renderAll(); }));
 $("geoBtn").addEventListener("click", () => {
   if (!navigator.geolocation) return alert("Location isn't available in this browser.");
   $("geoBtn").textContent = "📍 …";
@@ -456,9 +578,12 @@ document.addEventListener("click", e => { if (!e.target.closest(".search")) sug.
 
 // ---------- Go ----------
 loadAll();
-initAccuracy();
+initAccuracy().then(() => { recentCache = null; renderAll(); });
 showTab(location.hash === "#accuracy" ? "accuracy" : "forecast");
 setInterval(() => { if (document.visibilityState === "visible") loadAll(); }, REFRESH_MS);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && state.fetchedAt && Date.now() - state.fetchedAt > REFRESH_MS) { loadAll(); initAccuracy(true); }
+  if (document.visibilityState === "visible" && state.fetchedAt && Date.now() - state.fetchedAt > REFRESH_MS) { loadAll(); initAccuracy().then(renderAll); }
 });
+window.addEventListener("online", () => loadAll());
+window.addEventListener("offline", renderStatus);
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});

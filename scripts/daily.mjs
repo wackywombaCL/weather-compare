@@ -1,9 +1,13 @@
 // Daily forecast logger + scorer. Runs in GitHub Actions (see .github/workflows/daily.yml).
 //
-// 1. SET: at 6am Pacific, save every source's hourly forecast for the next 24 hours
-//    (6am today -> 6am tomorrow) for each tracked location.
-// 2. SCORE: once a saved window has ended, pull the NWS station observations for that window
-//    and score each source: high/low error, hourly temperature error, rain yes/no, rain start time.
+// 1. SET (6am Pacific): save every source's hourly forecast for three 24-hour windows
+//    (6am→6am): today (lead 0), tomorrow (lead 1) and the day after (lead 2), for each location.
+//    Two extra "sources" are saved too: the plain average of all sources and the smart
+//    (accuracy-weighted) average, so we can see whether they beat the individual sources.
+// 2. SCORE: once a window has ended, pull the NWS station observations and score each source:
+//    high/low miss, hourly miss, rain hit/miss/false alarm, rain start timing, Brier score.
+// 3. STATUS + ALERTS: write data/status.json (shown in the app) and, if NTFY_TOPIC is set,
+//    send phone notifications for problems and for rainy days.
 //
 // Usage: node scripts/daily.mjs            (normal; only sets the forecast between 6 and 10am Pacific)
 //        FORCE=true node scripts/daily.mjs (set today's forecast now, whatever the time)
@@ -11,16 +15,20 @@
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
-import { SOURCES, PRESETS, isRainyHour, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, cToF } from "../src/sources.js";
+import { SOURCES, PRESETS, isRainyHour, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, mode, cToF } from "../src/sources.js";
+import { recentScores, smartWeights, PSEUDO_NAMES } from "../src/skill.js";
 
 export const TZ = "America/Los_Angeles";
 export const SET_HOUR = 6;
+export const LEADS = [0, 1, 2];
 const LOCATIONS = [PRESETS.vallejo, PRESETS.napa];
 // Observation stations to try first; the nearest NWS stations for the point are tried after these.
 const STATION_PREF = { napa: ["KAPC"], vallejo: [] };
+const SITE = "https://wackywombacl.github.io/weather-compare/";
 
 const r1 = v => isNum(v) ? Math.round(v * 10) / 10 : null;
-const nextDayKey = k => dayKey(localHourStart(k, 12, TZ) + 24 * 3600e3, TZ);
+const addDays = (k, n) => dayKey(localHourStart(k, 12, TZ) + n * 24 * 3600e3, TZ);
+const fmtTime = t => new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(t).replace(":00", "").replace(" ", "").toLowerCase();
 
 async function readJSON(file, fallback) {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
@@ -31,65 +39,133 @@ async function writeJSON(file, data) {
 }
 
 export function windowFor(dateKey) {
-  return { start: localHourStart(dateKey, SET_HOUR, TZ), end: localHourStart(nextDayKey(dateKey), SET_HOUR, TZ) };
+  return { start: localHourStart(dateKey, SET_HOUR, TZ), end: localHourStart(addDays(dateKey, 1), SET_HOUR, TZ) };
 }
 
-// ---------- 1. SET ----------
-export async function setForecast(dateKey, now, log) {
-  const win = windowFor(dateKey);
-  const from = Math.max(win.start, Math.floor(now / 3600e3) * 3600e3);
-  const out = { date: dateKey, setAt: now, windowStart: win.start, windowEnd: win.end, coverStart: from, locations: {} };
-  for (const loc of LOCATIONS) {
-    const L = (out.locations[loc.id] = { name: loc.name, lat: loc.lat, lon: loc.lon, sources: {} });
-    await Promise.all(SOURCES.map(async s => {
-      if (s.key && !process.env[s.key.env]) return; // no key saved yet: not tracked
-      try {
-        const d = await s.fetch(loc);
-        const hours = d.hourly.filter(h => h.t >= from && h.t < win.end)
-          .map(h => ({ t: h.t, temp: r1(h.temp), pop: isNum(h.pop) ? Math.round(h.pop) : null, cat: h.cat }));
-        if (!hours.length) throw new Error("no hourly data in window");
-        const temps = hours.map(h => h.temp).filter(isNum);
-        const pops = hours.map(h => h.pop).filter(isNum);
-        const rainHour = hours.find(isRainyHour);
-        L.sources[s.id] = {
-          ok: true,
-          hi: r1(Math.max(...temps)), lo: r1(Math.min(...temps)),
-          maxPop: pops.length ? Math.max(...pops) : null,
-          rainStart: rainHour ? rainHour.t : null,
-          official: d.daily[dateKey] ? { hi: r1(d.daily[dateKey].hi), lo: r1(d.daily[dateKey].lo), pop: d.daily[dateKey].pop ?? null } : null,
-          hours,
-        };
-      } catch (e) {
-        log(`  ${loc.id}/${s.id}: FAILED ${e.message}`);
-        L.sources[s.id] = { ok: false, error: String(e.message || e) };
-      }
-    }));
-    log(`  ${loc.id}: ` + SOURCES.filter(s => L.sources[s.id]).map(s => `${s.id}=${L.sources[s.id].ok ? `${L.sources[s.id].hi}/${L.sources[s.id].lo}` : "x"}`).join(" "));
+// Compact hourly storage: arrays indexed by hour from `start`.
+function pack(hours, start, end) {
+  const n = Math.round((end - start) / 3600e3);
+  const temp = Array(n).fill(null), pop = Array(n).fill(null), cat = Array(n).fill(null);
+  for (const h of hours) {
+    const i = Math.round((h.t - start) / 3600e3);
+    if (i < 0 || i >= n) continue;
+    temp[i] = r1(h.temp); pop[i] = isNum(h.pop) ? Math.round(h.pop) : null; cat[i] = h.cat || null;
+  }
+  return { start, temp, pop, cat };
+}
+export function unpack(p) {
+  if (!p) return [];
+  if (Array.isArray(p.hours)) return p.hours; // old format
+  const out = [];
+  p.temp.forEach((t, i) => { if (isNum(t)) out.push({ t: p.start + i * 3600e3, temp: t, pop: p.pop[i], cat: p.cat[i] }); });
+  return out;
+}
+function summarize(hours) {
+  const temps = hours.map(h => h.temp).filter(isNum);
+  const pops = hours.map(h => h.pop).filter(isNum);
+  const rainHour = hours.find(isRainyHour);
+  return { hi: temps.length ? r1(Math.max(...temps)) : null, lo: temps.length ? r1(Math.min(...temps)) : null,
+           maxPop: pops.length ? Math.max(...pops) : null, rainStart: rainHour ? rainHour.t : null, nh: hours.length };
+}
+
+// Plain or weighted average of several sources' hourly forecasts for one window.
+function blend(entries, weights) {
+  const byT = new Map();
+  for (const [id, hours] of entries) {
+    const w = weights ? weights[id] ?? 0 : 1;
+    if (!w) continue;
+    for (const h of hours) (byT.get(h.t) || byT.set(h.t, []).get(h.t)).push({ ...h, w });
+  }
+  const out = [];
+  for (const [t, hs] of [...byT.entries()].sort((a, b) => a[0] - b[0])) {
+    const tw = hs.reduce((s, h) => s + (isNum(h.temp) ? h.w : 0), 0);
+    if (!tw || hs.length < 2) continue;
+    const temp = hs.reduce((s, h) => s + (isNum(h.temp) ? h.temp * h.w : 0), 0) / tw;
+    const pw = hs.filter(h => isNum(h.pop));
+    const pop = pw.length ? pw.reduce((s, h) => s + h.pop * h.w, 0) / pw.reduce((s, h) => s + h.w, 0) : null;
+    const wetShare = hs.reduce((s, h) => s + (isRainyHour(h) ? h.w : 0), 0) / hs.reduce((s, h) => s + h.w, 0);
+    out.push({ t, temp, pop, cat: wetShare >= 0.5 ? "rain" : mode(hs.map(h => h.cat)) });
   }
   return out;
 }
 
+// ---------- 1. SET ----------
+export async function setForecast(dateKey, now, log, scores) {
+  const leads = {};
+  for (const L of LEADS) {
+    const w = windowFor(addDays(dateKey, L));
+    leads[L] = { date: addDays(dateKey, L), windowStart: w.start, windowEnd: w.end, coverStart: L === 0 ? Math.max(w.start, Math.floor(now / 3600e3) * 3600e3) : w.start };
+  }
+  const out = { v: 2, date: dateKey, setAt: now, leads, locations: {} };
+  const problems = [];
+  for (const loc of LOCATIONS) {
+    const Lc = (out.locations[loc.id] = { name: loc.name, lat: loc.lat, lon: loc.lon, sources: {} });
+    await Promise.all(SOURCES.map(async s => {
+      if (s.key && !process.env[s.key.env]) return; // no key saved yet: not tracked
+      try {
+        const d = await s.fetch(loc);
+        const entry = { ok: true, leads: {} };
+        for (const L of LEADS) {
+          const { coverStart: from, windowEnd: end, date } = leads[L];
+          const hours = d.hourly.filter(h => h.t >= from && h.t < end);
+          if (hours.length < 6) continue;   // doesn't forecast that far out hour by hour
+          entry.leads[L] = { ...summarize(hours), dayPop: d.daily[date]?.pop ?? null, ...pack(hours, from, end) };
+        }
+        if (!entry.leads[0]) throw new Error("no hourly data for today");
+        Lc.sources[s.id] = entry;
+      } catch (e) {
+        log(`  ${loc.id}/${s.id}: FAILED ${e.message}`);
+        Lc.sources[s.id] = { ok: false, error: String(e.message || e) + (e.status ? ` (HTTP ${e.status})` : "") };
+        problems.push({ source: s.id, loc: loc.id, error: Lc.sources[s.id].error });
+      }
+    }));
+    // Pseudo-sources: plain average and accuracy-weighted ("smart") average, per lead.
+    const okIds = Object.keys(Lc.sources).filter(id => Lc.sources[id].ok);
+    for (const pid of ["avg", "smart"]) {
+      const entry = { ok: true, leads: {} };
+      for (const L of LEADS) {
+        const entries = okIds.filter(id => Lc.sources[id].leads[L]).map(id => [id, unpack(Lc.sources[id].leads[L])]);
+        let weights = null;
+        if (pid === "smart") {
+          const rs = recentScores(scores.days, { locs: [loc.id], lead: L, n: 14 });
+          weights = smartWeights(rs.scores, okIds) || smartWeights(recentScores(scores.days, { locs: [loc.id], lead: 0, n: 14 }).scores, okIds);
+          if (weights) entry.weights = { ...(entry.weights || {}), [L]: Object.fromEntries(Object.entries(weights).map(([k, v]) => [k, Math.round(v * 100) / 100])) };
+        }
+        const hours = blend(entries, weights);
+        if (hours.length < 6) continue;
+        const { coverStart: from, windowEnd: end } = leads[L];
+        entry.leads[L] = { ...summarize(hours), ...pack(hours, from, end) };
+      }
+      if (entry.leads[0]) Lc.sources[pid] = entry;
+    }
+    log(`  ${loc.id}: ` + Object.entries(Lc.sources).map(([id, x]) => `${id}=${x.ok ? `${x.leads[0].hi}/${x.leads[0].lo}` : "x"}`).join(" "));
+  }
+  return { snap: out, problems };
+}
+
 // ---------- 2. SCORE ----------
 const rainy = o => (isNum(o.precip) && o.precip > 0) || /rain|drizzle|shower|thunder/i.test(o.text || "") || o.present.some(w => /rain|drizzle|shower|thunder/i.test(w));
+const miles = (a, b) => { const R = 3958.8, r = x => x * Math.PI / 180; const dl = r(b[0] - a[0]), dn = r(b[1] - a[1]); const h = Math.sin(dl / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
 
-async function stationCandidates(loc) {
-  const list = [...(STATION_PREF[loc.id] || [])];
+export async function stationCandidates(loc) {
+  const list = [];
+  const add = (id, name, lat, lon) => { if (!list.some(x => x.id === id)) list.push({ id, name, mi: isNum(lat) ? Math.round(miles([loc.lat, loc.lon], [lat, lon]) * 10) / 10 : null }); };
+  let feats = [];
   try {
     const pt = await getJSON(`https://api.weather.gov/points/${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`);
-    const st = await getJSON(pt.properties.observationStations);
-    for (const f of st.features.slice(0, 5)) {
-      const id = f.properties?.stationIdentifier || f.id.split("/").pop();
-      if (!list.includes(id)) list.push(id);
-    }
+    feats = (await getJSON(pt.properties.observationStations)).features || [];
   } catch {}
+  const info = f => ({ id: f.properties?.stationIdentifier || f.id.split("/").pop(), name: f.properties?.name, lat: f.geometry?.coordinates?.[1], lon: f.geometry?.coordinates?.[0] });
+  for (const id of STATION_PREF[loc.id] || []) { const f = feats.map(info).find(x => x.id === id); add(id, f?.name, f?.lat, f?.lon); }
+  for (const f of feats.slice(0, 6).map(info)) add(f.id, f.name, f.lat, f.lon);
   return list;
 }
 
 export async function fetchObservations(loc, win) {
-  for (const id of await stationCandidates(loc)) {
+  for (const st of await stationCandidates(loc)) {
     try {
       const q = `start=${encodeURIComponent(new Date(win.start - 30 * 60e3).toISOString())}&end=${encodeURIComponent(new Date(win.end).toISOString())}`;
-      const j = await getJSON(`https://api.weather.gov/stations/${id}/observations?${q}`, { tries: 3 });
+      const j = await getJSON(`https://api.weather.gov/stations/${st.id}/observations?${q}`, { tries: 3 });
       const obs = (j.features || []).map(f => f.properties).map(p => ({
         t: Date.parse(p.timestamp),
         temp: isNum(p.temperature?.value) && p.temperature?.qualityControl !== "X" ? cToF(p.temperature.value) : null,
@@ -100,7 +176,7 @@ export async function fetchObservations(loc, win) {
       const inWin = obs.filter(o => o.t >= win.start && o.t < win.end);
       // Need temperature reports for at least ~2/3 of the window's hours.
       const need = Math.max(6, Math.floor((win.end - win.start) / 3600e3 * 0.65));
-      if (inWin.filter(o => isNum(o.temp)).length >= need) return { station: id, obs };
+      if (inWin.filter(o => isNum(o.temp)).length >= need) return { station: st, obs };
     } catch {}
   }
   return null;
@@ -113,7 +189,7 @@ export function summarizeObs(obs, win) {
   // Routine hourly reports (around :51-:59) carry the 1-hour precipitation total; summing only those avoids double counting.
   const routine = inWin.filter(o => new Date(o.t).getUTCMinutes() >= 45 && isNum(o.precip));
   const precipMM = routine.length ? routine.reduce((s, o) => s + o.precip, 0) : null;
-  // Observed temperature for each forecast hour: nearest report within 20 minutes of the top of the hour.
+  // Observed temperature for each hour: nearest report within 20 minutes of the top of the hour.
   const hours = [];
   for (let t = win.start; t < win.end; t += 3600e3) {
     let best = null;
@@ -136,32 +212,66 @@ export function summarizeObs(obs, win) {
 }
 
 export function scoreSource(fc, ob, win) {
-  if (!fc?.ok) return { ok: false };
+  if (!fc) return { ok: false };
+  const hours = unpack(fc).filter(h => h.t >= win.start && h.t < win.end);
+  if (hours.length < 6) return { ok: false };
+  const sm = summarize(hours);
   const diffs = [];
-  for (const h of fc.hours) {
-    const i = Math.round((h.t - win.start) / 3600e3);
-    const o = ob.hours[i];
+  for (const h of hours) {
+    const o = ob.hours[Math.round((h.t - win.start) / 3600e3)];
     if (isNum(o) && isNum(h.temp)) diffs.push(h.temp - o);
   }
-  let rain;
-  if (fc.rainStart && ob.rained) rain = "hit";
-  else if (fc.rainStart) rain = "false";
-  else if (ob.rained) rain = "miss";
-  else rain = "none";
+  const rain = sm.rainStart && ob.rained ? "hit" : sm.rainStart ? "false" : ob.rained ? "miss" : "none";
   return {
     ok: true,
-    hi: fc.hi, lo: fc.lo,
-    hiErr: isNum(ob.hi) ? r1(fc.hi - ob.hi) : null,
-    loErr: isNum(ob.lo) ? r1(fc.lo - ob.lo) : null,
+    hi: sm.hi, lo: sm.lo,
+    hiErr: isNum(ob.hi) && isNum(sm.hi) ? r1(sm.hi - ob.hi) : null,
+    loErr: isNum(ob.lo) && isNum(sm.lo) ? r1(sm.lo - ob.lo) : null,
     mae: diffs.length ? r1(mean(diffs.map(Math.abs))) : null,
     bias: diffs.length ? r1(mean(diffs)) : null,
     nh: diffs.length,
-    maxPop: fc.maxPop,
-    brier: isNum(fc.maxPop) ? Math.round(((fc.maxPop / 100 - (ob.rained ? 1 : 0)) ** 2) * 1000) / 1000 : null,
-    rainStart: fc.rainStart,
+    maxPop: sm.maxPop,
+    brier: isNum(sm.maxPop) ? Math.round(((sm.maxPop / 100 - (ob.rained ? 1 : 0)) ** 2) * 1000) / 1000 : null,
+    rainStart: sm.rainStart,
     rain,
-    timing: rain === "hit" ? r1((fc.rainStart - ob.rainStart) / 3600e3) : null, // + = forecast too late, - = too early
+    timing: rain === "hit" ? r1((sm.rainStart - ob.rainStart) / 3600e3) : null, // + = forecast too late, - = too early
   };
+}
+
+// Normalize a saved forecast (old single-window format or v2) into { leads, locations[loc].sources[id].leads[L] }.
+function normalize(snap) {
+  if (snap.v === 2) return snap;
+  const leads = { 0: { date: snap.date, windowStart: snap.windowStart, windowEnd: snap.windowEnd, coverStart: snap.coverStart ?? snap.windowStart } };
+  const locations = {};
+  for (const [lid, L] of Object.entries(snap.locations || {})) {
+    locations[lid] = { ...L, sources: {} };
+    for (const [id, x] of Object.entries(L.sources || {})) locations[lid].sources[id] = x.ok ? { ok: true, leads: { 0: x } } : x;
+  }
+  return { ...snap, leads, locations };
+}
+
+// ---------- 3. Alerts ----------
+async function notify({ title, body, tags }, log) {
+  const topic = process.env.NTFY_TOPIC;
+  if (!topic) return;
+  try {
+    const r = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, { method: "POST", body, headers: { Title: title, Tags: tags, Click: SITE } });
+    log(`  notification "${title}": ${r.ok ? "sent" : "HTTP " + r.status}`);
+  } catch (e) { log(`  notification failed: ${e.message}`); }
+}
+
+function rainOutlook(snap, locId, now) {
+  const L = snap.locations[locId], lead = snap.leads[0];
+  if (!L) return null;
+  // Same rule as the app: show when the sources' average daily rain chance is over 40%.
+  const real = Object.entries(L.sources).filter(([id, x]) => x.ok && !PSEUDO_NAMES[id] && x.leads[0]);
+  const avgPop = mean(real.map(([, x]) => x.leads[0].dayPop ?? x.leads[0].maxPop));
+  if (!isNum(avgPop) || avgPop <= 40) return null;
+  const end = localHourStart(addDays(lead.date, 1), 0, TZ);
+  const starts = real.map(([, x]) => unpack(x.leads[0]).filter(h => h.t < end).find(isRainyHour)?.t).filter(isNum);
+  if (!starts.length) return null;
+  const t = Math.round(mean(starts) / 1800e3) * 1800e3;
+  return { avgPop: Math.round(avgPop), t, now: t <= now, n: starts.length, of: real.length };
 }
 
 // ---------- Main ----------
@@ -169,62 +279,100 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
   const today = dayKey(now, TZ);
   const hr = localHour(now, TZ);
   log(`Run at ${new Date(now).toISOString()} (${today} ${hr}:xx Pacific)`);
+  const scoresFile = path.join(dataDir, "scores.json");
+  const statusFile = path.join(dataDir, "status.json");
+  const scores = await readJSON(scoresFile, { version: 2, sources: {}, days: [] });
+  const status = await readJSON(statusFile, { sources: {}, alerted: {} });
+  status.alerted ||= {};
+  status.lastRun = now;
+  const problems = [];
 
   // 1. SET today's forecast
   const snapFile = path.join(dataDir, "forecasts", `${today}.json`);
   const have = await readJSON(snapFile, null);
+  let setNow = false;
   if (have) log(`Forecast for ${today} already set.`);
   else if (force || (hr >= SET_HOUR && hr < SET_HOUR + 4)) {
     log(`Setting forecast for ${today}…`);
-    await writeJSON(snapFile, await setForecast(today, now, log));
+    const { snap, problems: p } = await setForecast(today, now, log, scores);
+    await writeJSON(snapFile, snap);
+    setNow = true;
+    status.lastSet = { date: today, at: now };
+    for (const s of SOURCES) {
+      const results = LOCATIONS.map(l => snap.locations[l.id].sources[s.id]).filter(Boolean);
+      if (!results.length) { status.sources[s.id] = { ...(status.sources[s.id] || {}), tracked: false }; continue; }
+      const bad = results.find(x => !x.ok);
+      status.sources[s.id] = { ...(status.sources[s.id] || {}), tracked: true, ok: !bad, error: bad?.error || null, lastOk: bad ? status.sources[s.id]?.lastOk ?? null : today };
+    }
+    problems.push(...p.map(x => `${SOURCES.find(s => s.id === x.source)?.name || x.source} (${x.loc}): ${x.error}`));
+    // Rain alert for today
+    const lines = LOCATIONS.map(l => { const r = rainOutlook(snap, l.id, now); return r ? `${l.name.replace(", CA", "")}: ${r.now ? "rain already starting" : "starting around " + fmtTime(r.t)} (${r.n} of ${r.of} sources, avg ${r.avgPop}% chance)` : null; }).filter(Boolean);
+    if (lines.length) await notify({ title: "Rain likely today", body: lines.join("\n"), tags: "umbrella" }, log);
   } else log(`Not setting a forecast: it's ${hr}:xx Pacific (window is ${SET_HOUR}–${SET_HOUR + 4}am).`);
 
-  // 2. SCORE any set forecast whose 24-hour window has ended
-  const scoresFile = path.join(dataDir, "scores.json");
-  const scores = await readJSON(scoresFile, { version: 1, sources: {}, days: [] });
+  // 2. SCORE every saved window that has ended
   let files = [];
   try { files = (await readdir(path.join(dataDir, "forecasts"))).filter(f => f.endsWith(".json")).sort(); } catch {}
   let changed = false;
+  const obsCache = new Map();
   for (const f of files) {
-    const date = f.replace(".json", "");
-    const snap = await readJSON(path.join(dataDir, "forecasts", f), null);
-    if (!snap) continue;
-    // If the forecast was set late (e.g. a manual run in the evening), only score the hours it covered.
-    const win = { start: snap.coverStart ?? snap.windowStart, end: snap.windowEnd };
-    const partial = win.start - snap.windowStart >= 2 * 3600e3;
-    if (now < win.end + 20 * 60e3) continue;            // window not over yet
-    if (now - win.end > 6 * 24 * 3600e3) continue;      // too old: NWS keeps about a week of observations
-    for (const loc of LOCATIONS) {
-      if (!snap.locations[loc.id]) continue;
-      if (scores.days.some(d => d.date === date && d.loc === loc.id)) continue;
-      log(`Scoring ${date} ${loc.id}…`);
-      const got = await fetchObservations(loc, win);
-      if (!got) { log(`  no usable observations yet`); continue; }
-      const ob = summarizeObs(got.obs, win);
-      const src = {};
-      for (const s of SOURCES) {
-        const fc = snap.locations[loc.id].sources[s.id];
-        if (fc) src[s.id] = scoreSource(fc, ob, win);   // sources not tracked that day are left out
+    const raw = await readJSON(path.join(dataDir, "forecasts", f), null);
+    if (!raw) continue;
+    const snap = normalize(raw);
+    for (const [Ls, lead] of Object.entries(snap.leads)) {
+      const L = +Ls;
+      const win = { start: lead.coverStart ?? lead.windowStart, end: lead.windowEnd };
+      const partial = win.start - lead.windowStart >= 2 * 3600e3;
+      if (now < win.end + 20 * 60e3) continue;          // window not over yet
+      if (now - win.end > 6 * 24 * 3600e3) continue;    // too old: NWS keeps about a week of observations
+      for (const loc of LOCATIONS) {
+        const Lc = snap.locations[loc.id];
+        if (!Lc) continue;
+        if (scores.days.some(d => d.date === lead.date && d.loc === loc.id && (d.lead ?? 0) === L)) continue;
+        log(`Scoring ${lead.date} ${loc.id} (lead ${L}, set ${snap.date})…`);
+        const ck = `${loc.id}|${win.start}|${win.end}`;
+        if (!obsCache.has(ck)) obsCache.set(ck, await fetchObservations(loc, win));
+        const got = obsCache.get(ck);
+        if (!got) {
+          log(`  no usable observations yet`);
+          const key = `noobs|${lead.date}|${loc.id}`;
+          if (now - win.end > 3 * 3600e3 && !status.alerted[key]) { problems.push(`No usable station observations for ${loc.name} on ${lead.date}`); status.alerted[key] = now; }
+          continue;
+        }
+        const ob = summarizeObs(got.obs, win);
+        const src = {};
+        for (const [id, fc] of Object.entries(Lc.sources)) if (fc.ok && fc.leads?.[L]) src[id] = scoreSource(fc.leads[L], ob, win);
+        scores.days.push({ date: lead.date, setDate: snap.date, lead: L, loc: loc.id, station: got.station.id, stationName: got.station.name || null, stationMi: got.station.mi,
+          partial, windowStart: win.start, windowEnd: win.end, setAt: snap.setAt, obs: ob, src });
+        log(`  ${got.station.id}: obs ${ob.hi}/${ob.lo}, rain ${ob.rained ? "yes" : "no"} | ` +
+          Object.entries(src).map(([id, x]) => `${id} hi${x.hiErr ?? "-"} lo${x.loErr ?? "-"} mae${x.mae ?? "-"} ${x.rain ?? ""}`).join(" | "));
+        status.lastScored = { date: lead.date, at: now };
+        status.stations = { ...(status.stations || {}), [loc.id]: got.station };
+        changed = true;
       }
-      scores.days.push({ date, loc: loc.id, station: got.station, partial, windowStart: win.start, windowEnd: win.end, setAt: snap.setAt, obs: ob, src });
-      log(`  ${got.station}: obs ${ob.hi}/${ob.lo}, rain ${ob.rained ? "yes" : "no"} | ` +
-        SOURCES.filter(s => src[s.id]).map(s => `${s.id} hi${src[s.id].hiErr ?? "-"} lo${src[s.id].loErr ?? "-"} mae${src[s.id].mae ?? "-"} ${src[s.id].rain ?? ""}`).join(" | "));
-      changed = true;
     }
   }
-  for (const s of SOURCES) scores.sources[s.id] = { name: s.name, short: s.short };
-  if (changed || !have) {
-    scores.days.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.loc < b.loc ? -1 : 1);
+  for (const s of SOURCES) scores.sources[s.id] = { name: s.name, short: s.short, group: s.group || null };
+  for (const [id, name] of Object.entries(PSEUDO_NAMES)) scores.sources[id] = { name, short: id === "avg" ? "Average" : "Smart avg", group: "blend" };
+  scores.version = 2;
+  if (changed || setNow) {
+    scores.days.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.lead ?? 0) - (b.lead ?? 0) || (a.loc < b.loc ? -1 : 1));
     scores.updated = now;
     await writeJSON(scoresFile, scores);
   }
+
+  // 3. STATUS + problem alerts
+  status.problems = problems;
+  for (const k of Object.keys(status.alerted)) if (now - status.alerted[k] > 14 * 24 * 3600e3) delete status.alerted[k];
+  await writeJSON(statusFile, status);
+  if (problems.length) await notify({ title: "Weather tracking problem", body: problems.join("\n"), tags: "warning" }, log);
   return scores;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   const repo = process.env.GITHUB_REPOSITORY || "personal";
-  // NWS and MET Norway both ask automated clients to identify themselves.
   setKeyProvider(id => { const s = SOURCES.find(x => x.id === id); return s?.key ? process.env[s.key.env] : null; });
+  // NWS and MET Norway both ask automated clients to identify themselves.
   setRequestInit({ headers: { "User-Agent": `weather-compare/1.0 (github.com/${repo})`, Accept: "application/geo+json, application/json" } });
   const dataDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
   run({ dataDir, force: process.env.FORCE === "true" }).catch(e => { console.error(e); process.exit(1); });

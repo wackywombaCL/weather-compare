@@ -180,6 +180,79 @@ async function fetchOpenMeteo(loc, signal) {
   return { current, hourly, daily, note: "Blend of global & regional models" };
 }
 
+// ---------- Individual forecast models (via Open-Meteo, one request for all four) ----------
+export const MODELS = [
+  { id: "m_ecmwf", model: "ecmwf_ifs025", name: "ECMWF (European model)", short: "Euro" },
+  { id: "m_gfs",   model: "gfs_seamless", name: "GFS (American model)",   short: "GFS" },
+  { id: "m_icon",  model: "icon_seamless", name: "ICON (German model)",   short: "ICON" },
+  { id: "m_gem",   model: "gem_seamless", name: "GEM (Canadian model)",   short: "GEM" },
+];
+const modelFetches = new Map();
+function fetchModelsOnce(loc, signal) {
+  const key = `${(+loc.lat).toFixed(3)},${(+loc.lon).toFixed(3)}`;
+  const hit = modelFetches.get(key);
+  if (hit && Date.now() - hit.at < 60e3) return hit.p;
+  const q = new URLSearchParams({
+    latitude: loc.lat, longitude: loc.lon, models: MODELS.map(m => m.model).join(","),
+    current: "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,wind_direction_10m",
+    hourly: "temperature_2m,precipitation_probability,weather_code,wind_speed_10m,is_day",
+    daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+    temperature_unit: "fahrenheit", wind_speed_unit: "mph",
+    timezone: loc.tz || "auto", timeformat: "unixtime", forecast_days: "7",
+  });
+  const p = getJSON("https://api.open-meteo.com/v1/forecast?" + q, { signal });
+  modelFetches.set(key, { at: Date.now(), p });
+  p.catch(() => modelFetches.delete(key));
+  return p;
+}
+// Fill short gaps (some models are 3-hourly further out): temperature interpolated, the rest carried forward.
+function fillGaps(hours) {
+  for (let i = 0; i < hours.length; i++) {
+    if (isNum(hours[i].temp)) continue;
+    let a = i - 1, b = i + 1;
+    while (b < hours.length && !isNum(hours[b].temp)) b++;
+    if (a >= 0 && b < hours.length && b - a <= 6) {
+      for (let k = a + 1; k < b; k++) hours[k] = { ...hours[a], t: hours[k].t, temp: hours[a].temp + (hours[b].temp - hours[a].temp) * (k - a) / (b - a), pop: hours[k].pop ?? hours[a].pop };
+    }
+    i = b - 1;
+  }
+  return hours.filter(h => isNum(h.temp));
+}
+function makeModelFetch(m) {
+  return async (loc, signal) => {
+    const j = await fetchModelsOnce(loc, signal);
+    const tz = loc.tz || j.timezone;
+    const pick = (block, name) => block?.[`${name}_${m.model}`] ?? block?.[name];
+    const c = j.current || {};
+    const cCode = pick(c, "weather_code");
+    const [ccat, ctext] = wmo(cCode);
+    const current = {
+      temp: pick(c, "temperature_2m"), feels: pick(c, "apparent_temperature"), humidity: pick(c, "relative_humidity_2m"),
+      wind: pick(c, "wind_speed_10m"), windDir: pick(c, "wind_direction_10m"), cat: ccat, text: ctext, night: pick(c, "is_day") === 0,
+      observedAt: (c.time || Date.now() / 1000) * 1000, kind: "model",
+    };
+    const h = j.hourly || {};
+    const T = pick(h, "temperature_2m") || [], PP = pick(h, "precipitation_probability") || [], WC = pick(h, "weather_code") || [], WS = pick(h, "wind_speed_10m") || [], DAY = pick(h, "is_day") || h.is_day || [];
+    let lastCode = null;
+    const hourly = fillGaps((h.time || []).map((t, i) => {
+      if (WC[i] != null) lastCode = WC[i];
+      const [cat, text] = wmo(WC[i] ?? lastCode);
+      return { t: t * 1000, temp: T[i], pop: PP[i] ?? null, cat, text, night: DAY[i] === 0, wind: WS[i] };
+    }));
+    if (!hourly.length) throw new Error("model returned no data");
+    if (!isNum(current.temp)) { const h0 = hourly.find(x => x.t >= Date.now() - 3600e3) || hourly[0]; Object.assign(current, { temp: h0.temp, cat: h0.cat, text: h0.text, night: h0.night }); }
+    const d = j.daily || {};
+    const daily = {};
+    (d.time || []).forEach((t, i) => {
+      const hi = pick(d, "temperature_2m_max")?.[i], lo = pick(d, "temperature_2m_min")?.[i];
+      if (!isNum(hi) && !isNum(lo)) return;
+      const [cat, text] = wmo(pick(d, "weather_code")?.[i]);
+      daily[dayKey(t * 1000 + 12 * 3600e3, tz)] = { hi, lo, pop: pick(d, "precipitation_probability_max")?.[i] ?? null, cat, text };
+    });
+    return { current, hourly, daily, note: `${m.name.split(" (")[0]} model run, via Open-Meteo` };
+  };
+}
+
 async function fetchNWS(loc, signal) {
   if (loc.country && loc.country !== "US") throw Object.assign(new Error("US locations only"), { friendly: true });
   let pt;
@@ -450,17 +523,18 @@ async function fetchWeatherAPI(loc, signal) {
 }
 
 export const SOURCES = [
-  { id: "nws",       name: "National Weather Service", short: "NWS",        site: "https://www.weather.gov", color: "var(--s1)", fetch: fetchNWS },
+  { id: "nws",       name: "National Weather Service", short: "NWS",        site: "https://www.weather.gov", fetch: fetchNWS },
   { id: "openmeteo", name: "Open-Meteo",               short: "Open-Meteo", site: "https://open-meteo.com",  color: "var(--s2)", fetch: fetchOpenMeteo },
   { id: "metno",     name: "MET Norway (Yr)",          short: "Yr",         site: "https://www.yr.no",       color: "var(--s3)", fetch: fetchMetNo },
-  { id: "pirate",    name: "Pirate Weather",           short: "Pirate",     site: "https://pirateweather.net", color: "var(--s4)", fetch: fetchPirate,
+  { id: "pirate",    name: "Pirate Weather",           short: "Pirate",     site: "https://pirateweather.net", fetch: fetchPirate,
     key: { env: "PIRATE_KEY", signup: "https://pirate-weather.apiable.io" } },
-  { id: "tomorrow",  name: "Tomorrow.io",              short: "Tomorrow",   site: "https://www.tomorrow.io", color: "var(--s5)", fetch: fetchTomorrow,
+  { id: "tomorrow",  name: "Tomorrow.io",              short: "Tomorrow",   site: "https://www.tomorrow.io", fetch: fetchTomorrow,
     key: { env: "TOMORROW_KEY", signup: "https://app.tomorrow.io/development/keys" } },
-  { id: "weatherapi", name: "WeatherAPI.com",          short: "WeatherAPI", site: "https://www.weatherapi.com", color: "var(--s6)", fetch: fetchWeatherAPI,
+  { id: "weatherapi", name: "WeatherAPI.com",          short: "WeatherAPI", site: "https://www.weatherapi.com", fetch: fetchWeatherAPI,
     key: { env: "WEATHERAPI_KEY", signup: "https://www.weatherapi.com/my/" } },
-  { id: "visualcrossing", name: "Visual Crossing",     short: "VisualX",    site: "https://www.visualcrossing.com", color: "var(--s7)", fetch: fetchVisualCrossing,
+  { id: "visualcrossing", name: "Visual Crossing",     short: "VisualX",    site: "https://www.visualcrossing.com", fetch: fetchVisualCrossing,
     key: { env: "VISUALCROSSING_KEY", signup: "https://www.visualcrossing.com/account" } },
-  { id: "owm",       name: "OpenWeatherMap",           short: "OpenWeather", site: "https://openweathermap.org", color: "var(--s8)", fetch: fetchOWM,
+  { id: "owm",       name: "OpenWeatherMap",           short: "OpenWeather", site: "https://openweathermap.org", fetch: fetchOWM,
     key: { env: "OWM_KEY", signup: "https://home.openweathermap.org/api_keys" } },
+  ...MODELS.map(m => ({ id: m.id, name: m.name, short: m.short, site: "https://open-meteo.com/en/docs/model-updates", group: "model", fetch: makeModelFetch(m) })),
 ];

@@ -56,7 +56,11 @@
 
     <section id="secAvg">
       <h2>The average of everyone</h2>
-      <p class="hint">Just for fun: every available source averaged together. The shaded band shows the range between the lowest and highest source.</p>
+      <div class="acc-controls" style="margin:2px 0 8px">
+        <div class="seg" id="avgMode" role="group" aria-label="Average type"><button data-mode="smart">Smart</button><button data-mode="plain">Plain</button></div>
+        <span class="sub2" id="avgModeNote"></span>
+      </div>
+      <p class="hint">All sources blended together. The shaded band is the range from the lowest to the highest source; bars along the bottom are the rain chance.</p>
       <div class="avg-grid">
         <div class="panel avg-now" id="avgNow"></div>
         <div class="panel">
@@ -69,18 +73,19 @@
 
     <section id="secDaily">
       <h2>5-day forecast by source</h2>
-      <p class="hint">High / low, conditions, and chance of precipitation.</p>
+      <p class="hint">High / low, conditions, and chance of precipitation. Sorted by recent accuracy.</p>
       <div class="panel scroll"><table id="dailyTable"></table></div>
     </section>
 
     <section id="secHourly">
-      <h2>Next 30 hours by source</h2>
-      <p class="hint">Hover or tap the chart for exact values. The table scrolls sideways.</p>
+      <h2>Next 30 hours</h2>
+      <p class="hint">The black line is the average, with the full range of sources shaded. Tap sources below to draw them on top. Hover or tap the chart for exact values.</p>
       <div class="panel">
-        <div class="legend" id="hourLegend"></div>
+        <div class="chips" id="hourLegend"></div>
         <div class="chart" id="hourChart"></div>
       </div>
-      <div class="panel scroll" style="margin-top:12px"><table class="hourly" id="hourlyTable"></table></div>
+      <div class="acc-controls" style="margin:12px 0 6px"><div class="chips" id="tableMode"></div><span class="sub2">Sorted by recent accuracy. Icons show only when conditions change; rain chance shows when it's 20% or more.</span></div>
+      <div class="panel scroll"><table class="hourly" id="hourlyTable"></table></div>
     </section>
   </div>
 
@@ -90,8 +95,9 @@
       <div class="seg" id="accLoc" role="group" aria-label="Location">
         <button data-loc="vallejo">Vallejo</button><button data-loc="napa">Napa</button><button data-loc="both">Both</button>
       </div>
-      <span class="sub2" id="accUpdated"></span>
     </div>
+    <div class="healthrow" id="accHealth"></div>
+    <div class="sub2" id="accStations" style="margin:4px 0 0"></div>
 
     <section style="margin-top:0">
       <h2>Today's locked-in forecast</h2>
@@ -101,21 +107,21 @@
 
     <section>
       <h2>Last 3 days</h2>
-      <p class="hint">Each source's 6am forecast compared with what actually happened. A miss of “+2°” means the forecast was 2° too warm.</p>
+      <p class="hint">Each source's 6am forecast compared with what actually happened. A miss of “+2°” means the forecast was 2° too warm. The chart shows the actual temperatures (thick line) against the forecasts.</p>
       <div id="accRecent"></div>
     </section>
 
     <section>
       <h2>Long-term scoreboard</h2>
       <div class="acc-controls">
+        <div class="seg" id="accLead" role="group" aria-label="How far ahead"><button data-lead="0">Same day</button><button data-lead="1">1 day ahead</button><button data-lead="2">2 days ahead</button></div>
         <label for="accPeriod" class="sub2" style="font-size:13px">Period</label>
         <select id="accPeriod"></select>
       </div>
-      <div class="panel scroll"><table class="acc" id="accOverall"></table></div>
-      <div class="grid2" style="margin-top:12px">
-        <div><h3 style="font-size:14px;margin:0 0 6px">By season</h3><div class="panel scroll"><table class="acc" id="accSeason"></table></div></div>
-        <div><h3 style="font-size:14px;margin:0 0 6px">Wet vs. dry season</h3><div class="panel scroll"><table class="acc" id="accWetDry"></table></div></div>
-      </div>
+      <p class="hint">“1 day ahead” scores the forecast each source made the morning before; “2 days ahead”, two mornings before. The <i>Average</i> and <i>Smart average</i> rows are blends of all sources, tracked like any other forecast.</p>
+      <div class="panel scroll"><table class="acc stack" id="accOverall"></table></div>
+      <h3 style="font-size:14px;margin:16px 0 6px">By season</h3>
+      <div class="panel scroll"><table class="acc stack" id="accSeason"></table></div>
       <details class="how">
         <summary>How scoring works</summary>
         <ul>
@@ -126,6 +132,8 @@
           <li><b>Rain timing:</b> for hits, forecast start hour minus actual start. “+2h” means the forecast had it starting 2 hours later than it did.</li>
           <li><b>Rain skill (Brier):</b> compares the highest rain chance with what happened. 0 is perfect, lower is better.</li>
           <li><b>Score (0–100):</b> 70% temperature (100 minus 10 points per degree of average miss across high, low and hourly) and 30% rain (100 × (1 − Brier), or 100/0 for a right/wrong call when a source gives no rain chances). Just a handy single number for ranking.</li>
+          <li><b>Smart average:</b> a blend where each source's weight depends on its score over the previous 14 scored days (the best gets full weight; every 8 points behind it cuts the weight by about two-thirds). It needs 3+ scored days per source, and until then equals the plain average.</li>
+          <li><b>Recent accuracy shading</b> (Forecast tab): each source's average score over its last 7 scored days. Green 88+ (Great), yellow 80+ (Good), orange 70+ (Fair), red under 70 (Poor).</li>
           <li><b>Seasons:</b> meteorological (Winter Dec–Feb, Spring Mar–May, Summer Jun–Aug, Fall Sep–Nov) and Bay Area wet (Nov–Apr) vs. dry (May–Oct).</li>
         </ul>
       </details>
@@ -134,7 +142,7 @@
 
   <footer>
     Data: National Weather Service (api.weather.gov), Open-Meteo (open-meteo.com, CC BY 4.0),
-    MET Norway (api.met.no, CC BY 4.0), Pirate Weather (pirateweather.net), Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap. Place search by Open-Meteo Geocoding.
+    MET Norway (api.met.no, CC BY 4.0), Pirate Weather (pirateweather.net), Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap; ECMWF, GFS, ICON and GEM model data via Open-Meteo. Place search by Open-Meteo Geocoding.
   </footer>
 </div>
 <dialog class="settings" id="settings" aria-labelledby="settingsTitle">

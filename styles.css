@@ -8,6 +8,9 @@
   --text-2: #52514e;
   --text-3: #7a7974;
   --accent: #2a78d6;
+  --c1: #2a78d6; --c2: #eb6834; --c3: #1baf7a; --c4: #eda100;
+  --rain: #2a78d6;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
   --s1: #2a78d6;  /* NWS */
   --s2: #eb6834;  /* Open-Meteo */
   --s3: #1baf7a;  /* MET Norway */
@@ -26,7 +29,7 @@
     color-scheme: dark;
     --bg: #111110; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
     --text: #f0efec; --text-2: #c3c2b7; --text-3: #8f8e86; --accent: #3987e5;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --avg: #f0efec; --band: rgba(240,239,236,.12);
+    --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --rain: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --avg: #f0efec; --band: rgba(240,239,236,.12);
     --warn: #f0a24a; --shadow: none;
   }
 }
@@ -34,7 +37,7 @@
   color-scheme: dark;
   --bg: #111110; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
   --text: #f0efec; --text-2: #c3c2b7; --text-3: #8f8e86; --accent: #3987e5;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --avg: #f0efec; --band: rgba(240,239,236,.12);
+  --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --rain: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; --avg: #f0efec; --band: rgba(240,239,236,.12);
   --warn: #f0a24a; --shadow: none;
 }
 * { box-sizing: border-box; }
@@ -198,3 +201,73 @@ dialog.settings label a { font-weight: 400; font-size: 12px; color: var(--accent
 dialog.settings input { width: 100%; margin-top: 4px; border: 1px solid var(--border); background: var(--bg); border-radius: 10px; padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 dialog.settings .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .card .addkey { margin-top: 6px; }
+
+/* Accuracy badges: number + word + status dot, never color alone */
+.badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; line-height: 1; padding: 3px 7px 3px 6px; border-radius: 999px; white-space: nowrap; color: var(--text); background: var(--surface-2); vertical-align: middle; }
+.badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); display: inline-block; }
+.badge.b-good { background: color-mix(in srgb, var(--good) 20%, var(--surface)); } .badge.b-good i { background: var(--good); }
+.badge.b-warning { background: color-mix(in srgb, var(--warning) 26%, var(--surface)); } .badge.b-warning i { background: var(--warning); }
+.badge.b-serious { background: color-mix(in srgb, var(--serious) 24%, var(--surface)); } .badge.b-serious i { background: var(--serious); }
+.badge.b-critical { background: color-mix(in srgb, var(--critical) 20%, var(--surface)); } .badge.b-critical i { background: var(--critical); }
+.badge.b-none { color: var(--text-3); font-weight: 500; }
+.legendline { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.card.r-good { --c: var(--good); } .card.r-warning { --c: var(--warning); } .card.r-serious { --c: var(--serious); } .card.r-critical { --c: var(--critical); }
+.card.r-good { background: color-mix(in srgb, var(--good) 6%, var(--surface)); }
+.card.r-critical { background: color-mix(in srgb, var(--critical) 6%, var(--surface)); }
+.cards { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.card { padding: 12px 12px 12px 14px; }
+.card .src { align-items: center; }
+.card .src a { font-size: 13px; line-height: 1.25; }
+.big .t { font-size: 34px; }
+.big .i { font-size: 28px; }
+.card .cond { margin-bottom: 4px; font-size: 14px; }
+.meta { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.avg-now .meta { font-size: 13px; }
+tbody th .nm { margin-right: 6px; }
+tbody th .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+/* Chips (tap to compare) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.chiphint { font-size: 12px; color: var(--text-3); margin-right: 2px; }
+.schip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 4px 6px 4px 10px; cursor: pointer; font-size: 13px; }
+.schip:hover { border-color: var(--text-3); }
+.schip.on { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
+.schip .sw { width: 12px; height: 4px; border-radius: 2px; display: inline-block; }
+.schip.clear { padding: 4px 10px; color: var(--text-2); }
+.legend .sw.bar { height: 10px; width: 8px; vertical-align: -1px; background: var(--rain) !important; opacity: .7; }
+.chart .mk { font-size: 10px; fill: var(--text-2); }
+.tipp { color: var(--text-3); }
+.hourly td.wet .ct { color: var(--rain); }
+.hourly td .cp { color: var(--rain); min-height: 13px; }
+.hourly td .ci { min-height: 22px; }
+
+/* Accuracy tab */
+.healthrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.health { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--text); }
+.health.ok { background: color-mix(in srgb, var(--good) 16%, var(--surface)); }
+.health.warn { background: color-mix(in srgb, var(--warning) 26%, var(--surface)); }
+.blend, .blendrow th { font-style: italic; }
+tr.blendrow th, tr.blendrow td { background: var(--surface-2); }
+.acc th.sep, .acc td.sep { border-left: 1px solid var(--border); }
+.fva-legend { margin-top: 4px; }
+.legend .sw.dash2 { background: repeating-linear-gradient(90deg, var(--text-3) 0 4px, transparent 4px 7px) !important; }
+.legend .sw.vline { width: 2px; height: 12px; vertical-align: -2px; background: var(--rain) !important; }
+.daycard .chart { margin-bottom: 8px; }
+
+/* Phone: accuracy tables become stacked cards (one per source) */
+@media (max-width: 640px) {
+  table.stack thead { display: none; }
+  table.stack, table.stack tbody { display: block; width: 100%; }
+  table.stack tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px 8px; padding: 7px 2px; border-bottom: 1px solid var(--border); }
+  table.stack tr:last-child { border-bottom: 0; }
+  table.stack th, table.stack td { border: 0; padding: 1px 0; text-align: left !important; white-space: normal; position: static; background: none; }
+  table.stack tbody th { grid-column: 1 / -1; font-size: 14px; }
+  table.stack td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--text-3); }
+  table.stack td[data-label=""]::before, table.stack td[data-label="#"] { display: none; }
+  table.stack td.l { grid-column: 1 / -1; }
+  tr.blendrow { background: var(--surface-2); border-radius: 8px; padding: 8px !important; }
+  #accSeason tr { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  #accSeason td[data-label]::before { font-size: 10px; }
+}
+
+details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2); margin: 4px 0; }

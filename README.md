@@ -3,7 +3,8 @@
 Side-by-side forecasts from several weather providers, a blended "average of everyone", and a
 running accuracy scoreboard.
 
-**No key needed:** National Weather Service, Open-Meteo, MET Norway (Yr).
+**No key needed:** National Weather Service, Open-Meteo, MET Norway (Yr), and the ECMWF, GFS,
+ICON and GEM forecast models (via Open-Meteo).
 **Free API key needed:** Pirate Weather, Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap.
 
 Keys go in two places, never in the code: GitHub secrets (`PIRATE_KEY`, `TOMORROW_KEY`,
@@ -14,12 +15,14 @@ on each device. The "Check sources" workflow prints what every source returns.
 
 `.github/workflows/daily.yml` runs `scripts/daily.mjs` every morning:
 
-1. **6am Pacific:** saves each source's hourly forecast for the next 24 hours (6am → 6am) for
-   Vallejo and Napa to `data/forecasts/YYYY-MM-DD.json`.
+1. **6am Pacific:** saves each source's hourly forecast for today, tomorrow and the day after
+   (each 6am → 6am) for Vallejo and Napa to `data/forecasts/YYYY-MM-DD.json`, plus a plain average
+   and an accuracy-weighted "smart" average of all sources.
 2. **Next morning:** pulls that window's NWS station observations and scores each source
    (high/low miss, hourly miss, rain hit/miss/false alarm, rain start timing, Brier score),
    appending to `data/scores.json`.
-3. Commits the data and redeploys the site.
+3. Writes `data/status.json` (shown in the app), sends phone notifications through ntfy if
+   `NTFY_TOPIC` is set (problems, and rainy days), commits the data and redeploys the site.
 
 The Accuracy tab in the app reads those files.
 

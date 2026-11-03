@@ -41,6 +41,8 @@ jobs:
           WEATHERAPI_KEY: ${{ secrets.WEATHERAPI_KEY }}
           VISUALCROSSING_KEY: ${{ secrets.VISUALCROSSING_KEY }}
           OWM_KEY: ${{ secrets.OWM_KEY }}
+          # Phone notifications via the free ntfy app (optional): the topic name you subscribed to
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
       - name: Commit data
         run: |
           git config user.name "github-actions[bot]"

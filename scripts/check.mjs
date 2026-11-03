@@ -1,6 +1,7 @@
 // Quick live check of every source for Vallejo. Run by .github/workflows/check.yml.
 // Prints what each source returned (never the keys) so problems are easy to spot.
-import { SOURCES, PRESETS, setRequestInit, setKeyProvider, dayKey } from "../src/sources.js";
+import { SOURCES, PRESETS, setRequestInit, setKeyProvider, dayKey, getJSON, cToF } from "../src/sources.js";
+import { stationCandidates } from "./daily.mjs";
 
 setKeyProvider(id => { const s = SOURCES.find(x => x.id === id); return s?.key ? process.env[s.key.env] : null; });
 setRequestInit({ headers: { "User-Agent": `weather-compare/1.0 (github.com/${process.env.GITHUB_REPOSITORY || "personal"})`, Accept: "application/geo+json, application/json" } });
@@ -23,6 +24,18 @@ for (const s of SOURCES) {
   } catch (e) {
     failed++;
     console.log(`✗ ${s.name}: ${e.message}${e.status ? ` (HTTP ${e.status})` : ""}`);
+  }
+}
+// Nearby observation stations: which ones report, and how far away they are.
+for (const l of [PRESETS.vallejo, PRESETS.napa]) {
+  console.log(`\nStations near ${l.name}:`);
+  for (const st of await stationCandidates(l)) {
+    try {
+      const ob = (await getJSON(`https://api.weather.gov/stations/${st.id}/observations/latest`, { tries: 1 })).properties;
+      const age = Math.round((Date.now() - Date.parse(ob.timestamp)) / 60000);
+      const t = ob.temperature?.value;
+      console.log(`  ${st.id} ${st.name || ""} (${st.mi ?? "?"} mi): latest ${age} min ago, ${t == null ? "no temp" : Math.round(cToF(t)) + "°F"}, rain-hour ${ob.precipitationLastHour?.value ?? "n/a"}`);
+    } catch (e) { console.log(`  ${st.id} ${st.name || ""} (${st.mi ?? "?"} mi): no data (${e.message})`); }
   }
 }
 if (failed) process.exitCode = 1;
