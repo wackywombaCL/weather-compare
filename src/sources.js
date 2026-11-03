@@ -9,7 +9,7 @@ export const PRESETS = {
 };
 
 // Sources still to be added once API keys are in hand.
-export const PENDING_SOURCES = ["OpenWeatherMap", "Visual Crossing", "Weatherbit"];
+export const PENDING_SOURCES = ["OpenWeatherMap", "Weatherbit"];
 
 // ---------- Request options (the Node job sets a User-Agent; browsers can't) ----------
 let requestInit = {};
@@ -266,24 +266,48 @@ async function fetchMetNo(loc, signal) {
   return { current, hourly, daily, note: "ECMWF-based model" };
 }
 
+// Pirate Weather and Visual Crossing both use Dark Sky-style icon names.
+function darkSkyIcon(ic = "", sm = "") {
+  let cat;
+  if (/thunder/.test(ic)) cat = "thunder";
+  else if (ic === "hail" || ic === "sleet") cat = "sleet";
+  else if (/snow/.test(ic)) cat = "snow";
+  else if (ic === "rain" || /showers/.test(ic)) cat = /drizzle|light rain|possible/i.test(sm) ? "drizzle" : "rain";
+  else if (ic === "fog") cat = "fog";
+  else if (ic === "cloudy") cat = "cloudy";
+  else if (/^partly-cloudy/.test(ic)) cat = "partly";
+  else if (/^clear/.test(ic)) cat = "clear";
+  else cat = catFromText(sm);
+  return { cat, night: /night/.test(ic), text: sm || catLabel(cat) };
+}
+
+async function fetchVisualCrossing(loc, signal) {
+  const key = needKey("visualcrossing");
+  const tz = loc.tz;
+  const from = dayKey(Date.now(), tz), to = dayKey(Date.now() + 4 * 24 * 3600e3, tz);
+  const j = await getJSON(`https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}/${from}/${to}?unitGroup=us&include=days,hours,current&contentType=json&key=${encodeURIComponent(key)}`, { signal, tries: 1 });
+  const c = j.currentConditions || {}, cc = darkSkyIcon(c.icon, c.conditions);
+  const current = {
+    temp: c.temp, feels: c.feelslike, humidity: c.humidity, wind: c.windspeed, windDir: c.winddir,
+    cat: cc.cat, text: cc.text, night: cc.night, observedAt: (c.datetimeEpoch || Date.now() / 1000) * 1000, kind: "model",
+  };
+  const hourly = [], daily = {};
+  for (const d of j.days || []) {
+    const dv = darkSkyIcon(d.icon, d.conditions);
+    daily[d.datetime] = { hi: d.tempmax, lo: d.tempmin, pop: d.precipprob ?? null, cat: dv.cat, text: dv.text };
+    for (const h of d.hours || []) {
+      const v = darkSkyIcon(h.icon, h.conditions);
+      hourly.push({ t: h.datetimeEpoch * 1000, temp: h.temp, pop: h.precipprob ?? null, cat: v.cat, text: v.text, night: v.night, wind: h.windspeed });
+    }
+  }
+  return { current, hourly, daily, cost: j.queryCost, note: "Visual Crossing's model blend" };
+}
+
 async function fetchPirate(loc, signal) {
   const key = needKey("pirate");
   const j = await getJSON(`https://api.pirateweather.net/forecast/${encodeURIComponent(key)}/${(+loc.lat).toFixed(4)},${(+loc.lon).toFixed(4)}?units=us&extend=hourly&exclude=minutely,alerts`, { signal });
   const tz = loc.tz || j.timezone;
-  const conv = x => {
-    const ic = x.icon || "", sm = x.summary || "";
-    let cat;
-    if (/thunder/.test(ic)) cat = "thunder";
-    else if (ic === "hail" || ic === "sleet") cat = "sleet";
-    else if (ic === "snow") cat = "snow";
-    else if (ic === "rain") cat = /drizzle|light rain|possible/i.test(sm) ? "drizzle" : "rain";
-    else if (ic === "fog") cat = "fog";
-    else if (ic === "cloudy") cat = "cloudy";
-    else if (/^partly-cloudy/.test(ic)) cat = "partly";
-    else if (/^clear/.test(ic)) cat = "clear";
-    else cat = catFromText(sm);
-    return { cat, night: /night/.test(ic), text: sm || catLabel(cat) };
-  };
+  const conv = x => darkSkyIcon(x.icon, x.summary);
   const c = j.currently, cc = conv(c);
   const current = {
     temp: c.temperature, feels: c.apparentTemperature, humidity: isNum(c.humidity) ? c.humidity * 100 : null,
@@ -372,4 +396,6 @@ export const SOURCES = [
     key: { env: "TOMORROW_KEY", signup: "https://app.tomorrow.io/development/keys" } },
   { id: "weatherapi", name: "WeatherAPI.com",          short: "WeatherAPI", site: "https://www.weatherapi.com", color: "var(--s6)", fetch: fetchWeatherAPI,
     key: { env: "WEATHERAPI_KEY", signup: "https://www.weatherapi.com/my/" } },
+  { id: "visualcrossing", name: "Visual Crossing",     short: "VisualX",    site: "https://www.visualcrossing.com", color: "var(--s7)", fetch: fetchVisualCrossing,
+    key: { env: "VISUALCROSSING_KEY", signup: "https://www.visualcrossing.com/account" }, cacheMin: 30 },
 ];

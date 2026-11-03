@@ -65,7 +65,7 @@ const cacheKey = (s, loc) => `wc.cache.${s.id}.${(+loc.lat).toFixed(3)},${(+loc.
 async function fetchSource(s, loc, signal, force) {
   if (!s.key) return s.fetch(loc, signal);
   const k = cacheKey(s, loc), hit = store.get(k, null);
-  if (!force && hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+  if (!force && hit && Date.now() - hit.at < (s.cacheMin ? s.cacheMin * 60e3 : CACHE_MS)) return hit.data;
   const data = await s.fetch(loc, signal);
   store.set(k, { at: Date.now(), data });
   return data;
