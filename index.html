@@ -73,7 +73,7 @@
 
     <section id="secDaily">
       <h2>5-day forecast by source</h2>
-      <p class="hint">High / low, conditions, and chance of precipitation. Sorted by recent accuracy.</p>
+      <p class="hint">High / low, conditions, chance of rain (💧) and expected rain total (☔). Sorted by recent accuracy.</p>
       <div class="panel scroll"><table id="dailyTable"></table></div>
     </section>
 
@@ -84,7 +84,7 @@
         <div class="chips" id="hourLegend"></div>
         <div class="chart" id="hourChart"></div>
       </div>
-      <div class="acc-controls" style="margin:12px 0 6px"><div class="chips" id="tableMode"></div><span class="sub2">Sorted by recent accuracy. Icons show only when conditions change; rain chance shows when it's 20% or more.</span></div>
+      <div class="acc-controls" style="margin:12px 0 6px"><div class="chips" id="tableMode"></div><span class="sub2">Sorted by recent accuracy. Icons show only when conditions change. Under each temperature: rain chance (when 20%+) and expected rain amount in inches (when 0.01+).</span></div>
       <div class="panel scroll"><table class="hourly" id="hourlyTable"></table></div>
     </section>
   </div>
@@ -130,6 +130,7 @@
           <li><b>Hourly miss:</b> the average gap between the forecast and observed temperature, hour by hour, across the 24 hours.</li>
           <li><b>Rain:</b> a source “calls rain” when any hour shows rain, storms or snow, or a 50%+ chance. Observed rain is any station report of rain, drizzle, showers or storms. Hit = called and it rained; Miss = it rained without a call; False alarm = called but stayed dry.</li>
           <li><b>Rain timing:</b> for hits, forecast start hour minus actual start. “+2h” means the forecast had it starting 2 hours later than it did.</li>
+          <li><b>Rain total:</b> each source's expected rain for the window, compared with the station's measured total (in brackets: how far off). Not part of the score yet; it's shown so you can see who gets amounts right.</li>
           <li><b>Rain skill (Brier):</b> compares the highest rain chance with what happened. 0 is perfect, lower is better.</li>
           <li><b>Score (0–100):</b> 70% temperature (100 minus 10 points per degree of average miss across high, low and hourly) and 30% rain (100 × (1 − Brier), or 100/0 for a right/wrong call when a source gives no rain chances). Just a handy single number for ranking.</li>
           <li><b>Smart average:</b> a blend where each source's weight depends on its score over the previous 14 scored days (the best gets full weight; every 8 points behind it cuts the weight by about two-thirds). It needs 3+ scored days per source, and until then equals the plain average.</li>

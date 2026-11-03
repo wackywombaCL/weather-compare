@@ -18,7 +18,9 @@ for (const s of SOURCES) {
     console.log(`✓ ${s.name}`);
     console.log(`    now: ${Math.round(c.temp)}°F, ${c.text}, feels ${c.feels == null ? "-" : Math.round(c.feels)}, hum ${c.humidity == null ? "-" : Math.round(c.humidity)}%, wind ${c.wind == null ? "-" : Math.round(c.wind)} mph (as of ${fmt(c.observedAt)})`);
     console.log(`    hourly: ${next.length} upcoming hours, ${fmt(next[0]?.t)} -> ${fmt(next.at(-1)?.t)}; first 4: ` + next.slice(0, 4).map(x => `${fmt(x.t)} ${Math.round(x.temp)}° ${x.pop == null ? "-" : Math.round(x.pop)}% ${x.cat}${x.night ? "/night" : ""}`).join(" | "));
-    console.log(`    daily: ` + days.slice(0, 6).map(k => `${k} ${Math.round(d.daily[k].hi)}/${Math.round(d.daily[k].lo)} ${d.daily[k].pop == null ? "-" : Math.round(d.daily[k].pop)}% ${d.daily[k].cat}`).join(" | "));
+    console.log(`    daily: ` + days.slice(0, 6).map(k => `${k} ${Math.round(d.daily[k].hi)}/${Math.round(d.daily[k].lo)} ${d.daily[k].pop == null ? "-" : Math.round(d.daily[k].pop)}% ${d.daily[k].qpf == null ? "" : d.daily[k].qpf.toFixed(2) + "in "}${d.daily[k].cat}`).join(" | "));
+    const wet = next.filter(x => x.qpf > 0).slice(0, 3);
+    console.log(`    rain amounts: ${h.some(x => x.qpf != null) ? (wet.length ? "first wet hours " + wet.map(x => `${fmt(x.t)} ${x.qpf.toFixed(2)}in`).join(", ") : "none expected") : "NOT PROVIDED"}`);
     if (d.cost != null) console.log(`    request cost: ${d.cost} records`);
     if (dayKey(Date.now(), tz) !== days[0]) console.log(`    note: first daily entry is ${days[0]}, today is ${dayKey(Date.now(), tz)}`);
   } catch (e) {

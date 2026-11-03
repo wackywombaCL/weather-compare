@@ -1,7 +1,7 @@
 // Accuracy tab: reads data/scores.json, data/status.json and the saved 6am forecasts written by the daily job.
 import { SOURCES, PRESETS, isNum, mean, dayKey } from "./sources.js";
 import { dayScore, rating, PSEUDO } from "./skill.js";
-import { state, store, $, esc, T, D, A, fmtTime, fmtDayLong, lineChart, cvt, srcName, srcShort, isSelected, toggleSel, selColor, badge, renderAll } from "./app.js";
+import { state, store, $, esc, T, D, A, R, fmtTime, fmtDayLong, lineChart, cvt, srcName, srcShort, isSelected, toggleSel, selColor, badge, renderAll } from "./app.js";
 
 const TZ = "America/Los_Angeles";
 const LOC_IDS = ["vallejo", "napa"];
@@ -135,13 +135,14 @@ function renderToday(loc) {
     const rows = ids.map(id => {
       const x = todayEntry(snap, lid, id);
       if (!x) return "";
-      if (!x.ok) return `<tr>${nameCell(id)}<td colspan="4" class="l miss" data-label="">Couldn't save: ${esc(x.error)}</td></tr>`;
+      if (!x.ok) return `<tr>${nameCell(id)}<td colspan="5" class="l miss" data-label="">Couldn't save: ${esc(x.error)}</td></tr>`;
       return `<tr class="${isPseudo(id) ? "blendrow" : ""}">${nameCell(id)}${td("High", T(x.hi))}${td("Low", T(x.lo))}${td("Max rain chance", isNum(x.maxPop) ? Math.round(x.maxPop) + "%" : "—")}
+        ${td("Rain total", isNum(x.qpfTotal) ? R(x.qpfTotal) : "—")}
         ${td("Rain expected", x.rainStart ? "🌧️ from " + esc(fmtTime(x.rainStart, TZ)) + (x.rainStart >= lead0.windowStart + 18 * 3600e3 ? " (" + esc(fmtDayLong(x.rainStart, TZ).split(",")[0]) + ")" : "") : "No rain", "l")}</tr>`;
     }).join("");
     return `<div class="panel daycard">
       <h3>${esc(locName(lid))} · ${esc(fmtDayLong(lead0.windowStart, TZ))} <span class="sub2">set ${esc(fmtTime(snap.setAt, TZ))}, covers 6am → 6am</span></h3>
-      <table class="acc stack"><thead><tr><th>Source</th><th>High</th><th>Low</th><th>Max rain chance</th><th style="text-align:left">Rain expected</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <table class="acc stack"><thead><tr><th>Source</th><th>High</th><th>Low</th><th>Max rain chance</th><th>Rain total</th><th style="text-align:left">Rain expected</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join("");
 }
 
@@ -170,6 +171,7 @@ function renderRecent(loc) {
       else if (x.rain === "miss") rain = `<span class="rain-bad">✗ Missed the rain</span>`;
       else if (x.rain === "false") rain = `<span class="rain-bad">✗ False alarm</span> <span class="miss">(said ${esc(fmtTime(x.rainStart, TZ))})</span>`;
       else rain = `✓ Called it dry`;
+      if (isNum(x.qpf) && (x.qpf >= 0.01 || o.rained)) rain += ` <span class="miss">· ☔ ${R(x.qpf)}${isNum(x.qpfErr) ? ` (${x.qpfErr > 0 ? "+" : x.qpfErr < 0 ? "−" : "±"}${R(Math.abs(x.qpfErr), false)})` : ""}</span>`;
       return `<tr class="${isPseudo(id) ? "blendrow" : ""}">${nameCell(id)}${td("Score", scoreBadge(dayScore(x)))}
         ${td("High (miss)", `${T(x.hi)} <span class="miss">${D(x.hiErr)}</span>`)}${td("Low (miss)", `${T(x.lo)} <span class="miss">${D(x.loErr)}</span>`)}
         ${td("Hourly miss", A(x.mae))}${td("Rain", rain, "l")}</tr>`;

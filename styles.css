@@ -271,3 +271,6 @@ tr.blendrow th, tr.blendrow td { background: var(--surface-2); }
 }
 
 details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2); margin: 4px 0; }
+
+.cell .cq { font-size: 11px; color: var(--rain); display: block; font-weight: 600; }
+.hourly td .cq { min-height: 13px; }

@@ -35,6 +35,11 @@ export const D = (d, digits = 0) => { if (!isNum(d)) return "—"; const v = sta
 export const A = (d, digits = 1) => !isNum(d) ? "—" : (state.units === "F" ? d : d * 5 / 9).toFixed(digits) + "°";
 const W = mph => !isNum(mph) ? "—" : state.units === "F" ? Math.round(mph) + " mph" : Math.round(mph * 1.609) + " km/h";
 const P = p => !isNum(p) ? "—" : Math.round(p) + "%";
+// Rain amounts: inches (°F mode) or millimeters (°C mode).
+export const R = (inch, unit = true) => !isNum(inch) ? "—" : state.units === "F"
+  ? (inch < 0.005 ? "0" : unit ? inch.toFixed(inch < 10 ? 2 : 1) + " in" : inch.toFixed(2).replace(/^0\./, "."))
+  : (inch * 25.4 < 0.5 ? "0" : (inch * 25.4).toFixed(inch * 25.4 < 10 ? 1 : 0)) + (unit ? " mm" : "");
+const wetAmt = inch => isNum(inch) && inch >= 0.005;
 const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
 const dir = d => typeof d === "string" ? d : isNum(d) ? COMPASS[Math.round(d / 22.5) % 16] : "";
 export const fmtHour = (ms, tz) => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric" }).format(ms).replace(":00", "").replace(" ", "").toLowerCase();
@@ -202,7 +207,7 @@ function renderCards() {
       <div class="big"><span class="i" aria-hidden="true">${icon(c.cat, c.night)}</span><span class="t">${T(c.temp)}</span></div>
       <div class="cond">${esc(c.text)}</div>
       <div class="meta">Feels ${T(c.feels)} · ${P(c.humidity)} · ${W(c.wind)} ${esc(dir(c.windDir))}</div>
-      <div class="meta">Today ${d ? `${T(d.hi)} / ${T(d.lo)}${d.partial ? "*" : ""}` : "—"} · <span title="${esc(r.data.note)}">${esc(ago(c.observedAt))}</span></div>
+      <div class="meta">Today ${d ? `${T(d.hi)} / ${T(d.lo)}${d.partial ? "*" : ""}${wetAmt(d.qpf) ? ` · ☔ ${R(d.qpf)}` : ""}` : "—"} · <span title="${esc(r.data.note)}">${esc(ago(c.observedAt))}</span></div>
     </div>`;
   }).join("");
   $("cards").querySelectorAll("[data-open-settings]").forEach(b => b.addEventListener("click", openSettings));
@@ -250,7 +255,7 @@ function renderAverage() {
       <div class="dn">${i === 0 ? "Today" : fmtDay(d.ms, tz)}</div>
       <div class="di" aria-hidden="true">${ds.length ? icon(c, false) : ""}</div>
       <div class="hl">${T(wmean(ds.map(([id, x]) => [id, x.hi]), weights))} <span class="lo">${T(wmean(ds.map(([id, x]) => [id, x.lo]), weights))}</span></div>
-      <div class="pp">💧 ${P(avgPop)}</div>
+      <div class="pp">💧 ${P(avgPop)}${(() => { const q = wmean(ds.map(([id, x]) => [id, x.qpf]), weights); return wetAmt(q) ? ` · ☔ ${R(q)}` : ""; })()}</div>
       ${rain ? `<div class="rs" title="Average of when each source has rain starting (${rain.n} of ${rain.of} sources call for rain that day)">🌧️ ${rain.now ? "now" : "~" + esc(fmtTime(rain.t, tz))}<span class="rsn"> · ${rain.n}/${rain.of}</span></div>` : ""}
       <div class="rg" title="Range of highs across sources">${his.length > 1 ? `highs ${T(Math.min(...his))}–${T(Math.max(...his))}` : "&nbsp;"}</div>
     </div>`;
@@ -258,17 +263,18 @@ function renderAverage() {
 
   const grid = hourGrid();
   const maps = ok.map(s => [s.id, new Map(state.results[s.id].data.hourly.map(h => [h.t, h]))]);
-  const avg = [], lo = [], hi = [], pop = [];
+  const avg = [], lo = [], hi = [], pop = [], qpfs = [];
   for (const t of grid) {
     const v = maps.map(([id, m]) => [id, m.get(t)?.temp]).filter(([, x]) => isNum(x));
     avg.push(v.length ? wmean(v, weights) : null);
     lo.push(v.length ? Math.min(...v.map(x => x[1])) : null); hi.push(v.length ? Math.max(...v.map(x => x[1])) : null);
     pop.push(wmean(maps.map(([id, m]) => [id, m.get(t)?.pop]), weights));
+    qpfs.push(wmean(maps.map(([id, m]) => [id, m.get(t)?.qpf]), weights));
   }
   const label = state.avgMode === "smart" && smartReady ? "Smart average" : "Average";
   const ser = [{ name: label, color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: [lo.map(cvt), hi.map(cvt)], extra: i => `<div class="row"><span>Range</span><span>${T(lo[i])} – ${T(hi[i])}</span></div>` }];
   $("avgLegend").innerHTML = `<span><span class="sw" style="background:var(--avg)"></span>${label}</span>` + (ok.length > 1 ? `<span><span class="sw band"></span>Lowest–highest source</span>` : "") + `<span><span class="sw bar"></span>Rain chance</span>`;
-  lineChart($("avgChart"), grid, ser, { tz, bars: pop });
+  lineChart($("avgChart"), grid, ser, { tz, bars: pop, amounts: qpfs });
 }
 
 // Average rain start for a local day: each source's first rainy hour that day, averaged.
@@ -302,7 +308,7 @@ function renderDaily() {
       const ds = ok.map(s => [s.id, state.results[s.id].data.daily[d.key]]).filter(([, x]) => x);
       html += `<td class="cell"><span class="ci" aria-hidden="true">${ds.length ? icon(mode(ds.map(([, x]) => x.cat)), false) : ""}</span>
         <span class="ct">${T(wmean(ds.map(([id, x]) => [id, x.hi]), weights))} <span class="lo">${T(wmean(ds.map(([id, x]) => [id, x.lo]), weights))}</span></span>
-        <span class="cp">💧 ${P(wmean(ds.map(([id, x]) => [id, x.pop]), weights))}</span></td>`;
+        <span class="cp">💧 ${P(wmean(ds.map(([id, x]) => [id, x.pop]), weights))}</span>${(() => { const q = wmean(ds.map(([id, x]) => [id, x.qpf]), weights); return wetAmt(q) ? `<span class="cq">☔ ${R(q)}</span>` : ""; })()}</td>`;
     }
     html += `</tr>`;
   }
@@ -317,7 +323,7 @@ function renderDaily() {
       html += `<td class="cell" title="${esc(x.text || catLabel(x.cat))}${x.partial ? " (rest of today only)" : ""}${x.nightOnly ? " (tonight)" : ""}">
         <span class="ci" aria-hidden="true">${icon(x.cat, !!x.nightOnly)}</span>
         <span class="ct">${T(x.hi)} <span class="lo">${T(x.lo)}</span>${x.partial ? "*" : ""}</span>
-        <span class="cp">💧 ${P(x.pop)}</span></td>`;
+        <span class="cp">💧 ${P(x.pop)}</span>${wetAmt(x.qpf) ? `<span class="cq">☔ ${R(x.qpf)}</span>` : ""}</td>`;
     }
     html += `</tr>`;
   }
@@ -342,9 +348,10 @@ function renderHourly() {
     const lo = grid.map(t => { const v = ok.map(s => maps[s.id].get(t)?.temp).filter(isNum); return v.length ? Math.min(...v) : null; });
     const hi = grid.map(t => { const v = ok.map(s => maps[s.id].get(t)?.temp).filter(isNum); return v.length ? Math.max(...v) : null; });
     const pop = grid.map(t => wmean(ok.map(s => [s.id, maps[s.id].get(t)?.pop]), weights));
+    const qpf = grid.map(t => wmean(ok.map(s => [s.id, maps[s.id].get(t)?.qpf]), weights));
     const ser = [{ name: weights ? "Smart avg" : "Average", color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: ok.length > 1 ? [lo.map(cvt), hi.map(cvt)] : null }];
     for (const id of state.sel) if (maps[id]) ser.push({ name: srcShort(id), color: selColor(id), values: grid.map(t => cvt(maps[id].get(t)?.temp)), pops: grid.map(t => maps[id].get(t)?.pop) });
-    lineChart($("hourChart"), grid, ser, { tz, bars: pop, directLabels: ser.length > 1, extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span class="tipp">💧${Math.round(x.pops[i])}%</span>` : "" });
+    lineChart($("hourChart"), grid, ser, { tz, bars: pop, amounts: qpf, directLabels: ser.length > 1, extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span class="tipp">💧${Math.round(x.pops[i])}%</span>` : "" });
   } else $("hourChart").innerHTML = "";
 
   // Table: best sources first; icons only when conditions change; rain chance only when 20%+.
@@ -369,7 +376,8 @@ function renderHourly() {
       const key = h.cat + (h.night ? "n" : "");
       const showIcon = key !== lastCat || i === 0; lastCat = key;
       const wet = isNum(h.pop) && h.pop >= 20;
-      return `<td class="cell ${newDay[i] ? "newday" : ""}${isRainyHour(h) ? " wet" : ""}" title="${esc(h.text || catLabel(h.cat))}${isNum(h.pop) ? ` · ${Math.round(h.pop)}% rain` : ""}"><span class="ci" aria-hidden="true">${showIcon ? icon(h.cat, h.night) : ""}</span><span class="ct">${T(h.temp)}</span><span class="cp">${wet ? Math.round(h.pop) + "%" : ""}</span></td>`;
+      const amt = isNum(h.qpf) && h.qpf >= 0.01;
+      return `<td class="cell ${newDay[i] ? "newday" : ""}${isRainyHour(h) ? " wet" : ""}" title="${esc(h.text || catLabel(h.cat))}${isNum(h.pop) ? ` · ${Math.round(h.pop)}% rain` : ""}${isNum(h.qpf) ? ` · ${R(h.qpf)}` : ""}"><span class="ci" aria-hidden="true">${showIcon ? icon(h.cat, h.night) : ""}</span><span class="ct">${T(h.temp)}</span><span class="cp">${wet ? Math.round(h.pop) + "%" : ""}</span><span class="cq">${amt ? R(h.qpf, false) : ""}</span></td>`;
     }).join("");
   };
   let body = "";
@@ -379,7 +387,7 @@ function renderHourly() {
       if (!hs.length) return null;
       const temp = wmean(hs.map(([id, h]) => [id, h.temp]), weights), pop = wmean(hs.map(([id, h]) => [id, h.pop]), weights);
       const wet = hs.filter(([, h]) => isRainyHour(h)).length >= hs.length / 2;
-      return { temp, pop, cat: wet ? "rain" : mode(hs.map(([, h]) => h.cat)), night: hs[0][1].night, text: "" };
+      return { temp, pop, qpf: wmean(hs.map(([id, h]) => [id, h.qpf]), weights), cat: wet ? "rain" : mode(hs.map(([, h]) => h.cat)), night: hs[0][1].night, text: "" };
     }) + `</tr>`;
   }
   for (const s of orderedSources()) {
@@ -466,7 +474,8 @@ export function lineChart(el, times, series, opts = {}) {
     dots.innerHTML = series.filter(s => isNum(s.values[i])).map(s => `<circle cx="${x(i)}" cy="${y(s.values[i])}" r="4.5" fill="${s.color}" stroke="var(--surface)" stroke-width="2"/>`).join("");
     tip.innerHTML = `<div class="tt">${esc(fmtDay(times[i], tz))} ${esc(fmtHour(times[i], tz))}</div>` +
       series.map(s => `<div class="row"><span><span class="sw" style="background:${s.color}"></span>${esc(s.name)}</span><span>${isNum(s.values[i]) ? Math.round(s.values[i]) + "°" : "—"}${opts.extra ? opts.extra(s, i) : ""}</span></div>${s.extra ? s.extra(i) : ""}`).join("") +
-      (opts.bars && isNum(opts.bars[i]) ? `<div class="row"><span>💧 Rain chance</span><span>${Math.round(opts.bars[i])}%</span></div>` : "");
+      (opts.bars && isNum(opts.bars[i]) ? `<div class="row"><span>💧 Rain chance</span><span>${Math.round(opts.bars[i])}%</span></div>` : "") +
+      (opts.amounts && wetAmt(opts.amounts[i]) ? `<div class="row"><span>☔ Rain amount</span><span>${R(opts.amounts[i])}</span></div>` : "");
     tip.style.display = "block";
     const sx = x(i) * (r.width / W), tw = tip.offsetWidth;
     tip.style.left = (sx + 14 + tw > r.width ? sx - 14 - tw : sx + 14) + "px";

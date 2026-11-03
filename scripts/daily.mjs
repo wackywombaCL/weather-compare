@@ -47,26 +47,28 @@ export function windowFor(dateKey) {
 // Compact hourly storage: arrays indexed by hour from `start`.
 function pack(hours, start, end) {
   const n = Math.round((end - start) / 3600e3);
-  const temp = Array(n).fill(null), pop = Array(n).fill(null), cat = Array(n).fill(null);
+  const temp = Array(n).fill(null), pop = Array(n).fill(null), cat = Array(n).fill(null), qpf = Array(n).fill(null);
   for (const h of hours) {
     const i = Math.round((h.t - start) / 3600e3);
     if (i < 0 || i >= n) continue;
     temp[i] = r1(h.temp); pop[i] = isNum(h.pop) ? Math.round(h.pop) : null; cat[i] = h.cat || null;
+    qpf[i] = isNum(h.qpf) ? Math.round(h.qpf * 1000) / 1000 : null;
   }
-  return { start, temp, pop, cat };
+  return { start, temp, pop, cat, ...(qpf.some(isNum) ? { qpf } : {}) };
 }
 export function unpack(p) {
   if (!p) return [];
   if (Array.isArray(p.hours)) return p.hours; // old format
   const out = [];
-  p.temp.forEach((t, i) => { if (isNum(t)) out.push({ t: p.start + i * 3600e3, temp: t, pop: p.pop[i], cat: p.cat[i] }); });
+  p.temp.forEach((t, i) => { if (isNum(t)) out.push({ t: p.start + i * 3600e3, temp: t, pop: p.pop[i], cat: p.cat[i], qpf: p.qpf?.[i] ?? null }); });
   return out;
 }
 function summarize(hours) {
   const temps = hours.map(h => h.temp).filter(isNum);
   const pops = hours.map(h => h.pop).filter(isNum);
   const rainHour = hours.find(isRainyHour);
-  return { hi: temps.length ? r1(Math.max(...temps)) : null, lo: temps.length ? r1(Math.min(...temps)) : null,
+  const q = hours.map(h => h.qpf).filter(isNum);
+  return { qpfTotal: q.length ? Math.round(q.reduce((a, b) => a + b, 0) * 100) / 100 : null, hi: temps.length ? r1(Math.max(...temps)) : null, lo: temps.length ? r1(Math.min(...temps)) : null,
            maxPop: pops.length ? Math.max(...pops) : null, rainStart: rainHour ? rainHour.t : null, nh: hours.length };
 }
 
@@ -86,7 +88,9 @@ function blend(entries, weights) {
     const pw = hs.filter(h => isNum(h.pop));
     const pop = pw.length ? pw.reduce((s, h) => s + h.pop * h.w, 0) / pw.reduce((s, h) => s + h.w, 0) : null;
     const wetShare = hs.reduce((s, h) => s + (isRainyHour(h) ? h.w : 0), 0) / hs.reduce((s, h) => s + h.w, 0);
-    out.push({ t, temp, pop, cat: wetShare >= 0.5 ? "rain" : mode(hs.map(h => h.cat)) });
+    const qw = hs.filter(h => isNum(h.qpf));
+    const qpf = qw.length ? qw.reduce((s, h) => s + h.qpf * h.w, 0) / qw.reduce((s, h) => s + h.w, 0) : null;
+    out.push({ t, temp, pop, qpf, cat: wetShare >= 0.5 ? "rain" : mode(hs.map(h => h.cat)) });
   }
   return out;
 }
@@ -237,6 +241,8 @@ export function scoreSource(fc, ob, win) {
     rainStart: sm.rainStart,
     rain,
     timing: rain === "hit" ? r1((sm.rainStart - ob.rainStart) / 3600e3) : null, // + = forecast too late, - = too early
+    qpf: sm.qpfTotal,                                                       // forecast rain total (in)
+    qpfErr: isNum(sm.qpfTotal) && isNum(ob.precipIn) ? Math.round((sm.qpfTotal - ob.precipIn) * 100) / 100 : null,
   };
 }
 

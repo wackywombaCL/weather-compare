@@ -129,6 +129,15 @@ export function localHourStart(dateKey, hour, tz) {
   return null;
 }
 
+// Daily rain totals (inches) from hourly amounts, for sources that don't give one per day.
+export function addDailyQpf(daily, hourly, tz, { overwrite = false } = {}) {
+  const sums = {};
+  for (const h of hourly) if (isNum(h.qpf)) sums[dayKey(h.t, tz)] = (sums[dayKey(h.t, tz)] || 0) + h.qpf;
+  for (const [k, v] of Object.entries(sums)) if (daily[k] && (overwrite || !isNum(daily[k].qpf))) daily[k].qpf = Math.round(v * 100) / 100;
+  return daily;
+}
+const MM = mm => isNum(mm) ? mm / 25.4 : null;
+
 function dailyFromPoints(points, tz) {
   const byDay = {};
   for (const p of points) (byDay[dayKey(p.t, tz)] ||= []).push(p);
@@ -153,9 +162,9 @@ async function fetchOpenMeteo(loc, signal) {
   const q = new URLSearchParams({
     latitude: loc.lat, longitude: loc.lon,
     current: "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,wind_direction_10m",
-    hourly: "temperature_2m,precipitation_probability,weather_code,wind_speed_10m,is_day",
-    daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-    temperature_unit: "fahrenheit", wind_speed_unit: "mph",
+    hourly: "temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,is_day",
+    daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum",
+    temperature_unit: "fahrenheit", wind_speed_unit: "mph", precipitation_unit: "inch",
     timezone: loc.tz || "auto", timeformat: "unixtime", forecast_days: "7",
   });
   const j = await getJSON("https://api.open-meteo.com/v1/forecast?" + q, { signal });
@@ -170,12 +179,12 @@ async function fetchOpenMeteo(loc, signal) {
   const h = j.hourly;
   const hourly = h.time.map((t, i) => {
     const [cat, text] = wmo(h.weather_code[i]);
-    return { t: t * 1000, temp: h.temperature_2m[i], pop: h.precipitation_probability[i], cat, text, night: h.is_day[i] === 0, wind: h.wind_speed_10m[i] };
+    return { t: t * 1000, temp: h.temperature_2m[i], pop: h.precipitation_probability[i], qpf: h.precipitation?.[i] ?? null, cat, text, night: h.is_day[i] === 0, wind: h.wind_speed_10m[i] };
   });
   const daily = {};
   j.daily.time.forEach((t, i) => {
     const [cat, text] = wmo(j.daily.weather_code[i]);
-    daily[dayKey(t * 1000 + 12 * 3600e3, tz)] = { hi: j.daily.temperature_2m_max[i], lo: j.daily.temperature_2m_min[i], pop: j.daily.precipitation_probability_max[i], cat, text };
+    daily[dayKey(t * 1000 + 12 * 3600e3, tz)] = { hi: j.daily.temperature_2m_max[i], lo: j.daily.temperature_2m_min[i], pop: j.daily.precipitation_probability_max[i], qpf: j.daily.precipitation_sum?.[i] ?? null, cat, text };
   });
   return { current, hourly, daily, note: "Blend of global & regional models" };
 }
@@ -195,9 +204,9 @@ function fetchModelsOnce(loc, signal) {
   const q = new URLSearchParams({
     latitude: loc.lat, longitude: loc.lon, models: MODELS.map(m => m.model).join(","),
     current: "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,wind_direction_10m",
-    hourly: "temperature_2m,precipitation_probability,weather_code,wind_speed_10m,is_day",
-    daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-    temperature_unit: "fahrenheit", wind_speed_unit: "mph",
+    hourly: "temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,is_day",
+    daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum",
+    temperature_unit: "fahrenheit", wind_speed_unit: "mph", precipitation_unit: "inch",
     timezone: loc.tz || "auto", timeformat: "unixtime", forecast_days: "7",
   });
   const p = getJSON("https://api.open-meteo.com/v1/forecast?" + q, { signal });
@@ -232,12 +241,12 @@ function makeModelFetch(m) {
       observedAt: (c.time || Date.now() / 1000) * 1000, kind: "model",
     };
     const h = j.hourly || {};
-    const T = pick(h, "temperature_2m") || [], PP = pick(h, "precipitation_probability") || [], WC = pick(h, "weather_code") || [], WS = pick(h, "wind_speed_10m") || [], DAY = pick(h, "is_day") || h.is_day || [];
+    const T = pick(h, "temperature_2m") || [], PP = pick(h, "precipitation_probability") || [], WC = pick(h, "weather_code") || [], WS = pick(h, "wind_speed_10m") || [], QP = pick(h, "precipitation") || [], DAY = pick(h, "is_day") || h.is_day || [];
     let lastCode = null;
     const hourly = fillGaps((h.time || []).map((t, i) => {
       if (WC[i] != null) lastCode = WC[i];
       const [cat, text] = wmo(WC[i] ?? lastCode);
-      return { t: t * 1000, temp: T[i], pop: PP[i] ?? null, cat, text, night: DAY[i] === 0, wind: WS[i] };
+      return { t: t * 1000, temp: T[i], pop: PP[i] ?? null, qpf: QP[i] ?? null, cat, text, night: DAY[i] === 0, wind: WS[i] };
     }));
     if (!hourly.length) throw new Error("model returned no data");
     // With several models in one request, the "current" block is shared, so use each model's own current hour.
@@ -250,7 +259,7 @@ function makeModelFetch(m) {
       const hi = pick(d, "temperature_2m_max")?.[i], lo = pick(d, "temperature_2m_min")?.[i];
       if (!isNum(hi) && !isNum(lo)) return;
       const [cat, text] = wmo(pick(d, "weather_code")?.[i]);
-      daily[dayKey(t * 1000 + 12 * 3600e3, tz)] = { hi, lo, pop: pick(d, "precipitation_probability_max")?.[i] ?? null, cat, text };
+      daily[dayKey(t * 1000 + 12 * 3600e3, tz)] = { hi, lo, pop: pick(d, "precipitation_probability_max")?.[i] ?? null, qpf: pick(d, "precipitation_sum")?.[i] ?? null, cat, text };
     });
     return { current, hourly, daily, note: `${m.name.split(" (")[0]} model run, via Open-Meteo` };
   };
@@ -266,9 +275,10 @@ async function fetchNWS(loc, signal) {
     throw e;
   }
   const p = pt.properties;
-  const [fc, fh, st] = await Promise.all([
+  const [fc, fh, grid, st] = await Promise.all([
     getJSON(p.forecast, { signal, tries: 3 }),
     getJSON(p.forecastHourly, { signal, tries: 3 }),
+    p.forecastGridData ? getJSON(p.forecastGridData, { signal, tries: 2 }).catch(() => null) : null,
     getJSON(p.observationStations, { signal }).catch(() => null),
   ]);
   const tz = loc.tz || p.timeZone;
@@ -280,6 +290,17 @@ async function fetchNWS(loc, signal) {
     pop: x.probabilityOfPrecipitation?.value ?? 0, cat: catFromText(x.shortForecast), text: x.shortForecast,
     night: !x.isDaytime, wind: windNum(x.windSpeed), windDir: x.windDirection, humidity: x.relativeHumidity?.value,
   }));
+  // Rain amounts: grid data gives totals per block ("2026-11-03T12:00:00+00:00/PT6H"), spread evenly over its hours.
+  const qpfByHour = new Map();
+  for (const v of grid?.properties?.quantitativePrecipitation?.values || []) {
+    const [startS, dur] = String(v.validTime).split("/");
+    const m = /P(?:(\d+)D)?(?:T(?:(\d+)H)?)?/.exec(dur || "");
+    const hrs = Math.max(1, (+(m?.[1] || 0)) * 24 + (+(m?.[2] || 0)));
+    const start = Date.parse(startS);
+    if (!isNum(start) || !isNum(v.value)) continue;
+    for (let k = 0; k < hrs; k++) qpfByHour.set(start + k * 3600e3, MM(v.value) / hrs);
+  }
+  if (qpfByHour.size) for (const h of hourly) h.qpf = qpfByHour.get(h.t) ?? null;
 
   const daily = {};
   for (const x of fc.properties.periods) {
@@ -291,6 +312,8 @@ async function fetchNWS(loc, signal) {
     if (x.isDaytime) { d.hi = temp; d.cat = catFromText(x.shortForecast); d.text = x.shortForecast; }
     else { d.lo = temp; if (!d.cat) { d.cat = catFromText(x.shortForecast); d.text = x.shortForecast; d.nightOnly = true; } }
   }
+
+  addDailyQpf(daily, hourly, tz);
 
   // Current: latest station observation if fresh, otherwise the current hour of the forecast.
   let current = null;
@@ -331,10 +354,12 @@ async function fetchMetNo(loc, signal) {
     const nx = e.data.next_1_hours || e.data.next_6_hours || e.data.next_12_hours;
     const s = metSymbol(nx?.summary?.symbol_code);
     const pop = nx?.details?.probability_of_precipitation;
+    const amt = MM(nx?.details?.precipitation_amount);
     return {
       t: Date.parse(e.time), temp: cToF(d.air_temperature), wind: isNum(d.wind_speed) ? d.wind_speed * 2.23694 : null,
       windDir: d.wind_from_direction, humidity: d.relative_humidity, pop: isNum(pop) ? pop : null,
       cat: s.cat, night: s.night, text: s.text, hourly: !!e.data.next_1_hours,
+      qpf: amt, // next 1 hour, or the next 6/12-hour block further out
     };
   });
   const hourly = pts.filter(p => p.hourly);
@@ -342,6 +367,7 @@ async function fetchMetNo(loc, signal) {
   const c = [...pts].reverse().find(p => p.t <= now) || pts[0];
   const current = { temp: c.temp, feels: null, humidity: c.humidity, wind: c.wind, windDir: c.windDir, cat: c.cat, text: c.text, night: c.night, observedAt: Date.parse(j.properties.meta.updated_at), kind: "model" };
   const daily = dailyFromPoints(pts, tz);
+  addDailyQpf(daily, pts, tz, { overwrite: true });   // each point's amount covers the period after it
   const today = dayKey(now, tz);
   if (daily[today]) daily[today].partial = true;
   for (const v of Object.values(daily)) v.text = catLabel(v.cat, false);
@@ -376,10 +402,10 @@ async function fetchVisualCrossing(loc, signal) {
   const hourly = [], daily = {};
   for (const d of j.days || []) {
     const dv = darkSkyIcon(d.icon, d.conditions);
-    daily[d.datetime] = { hi: d.tempmax, lo: d.tempmin, pop: d.precipprob ?? null, cat: dv.cat, text: dv.text };
+    daily[d.datetime] = { hi: d.tempmax, lo: d.tempmin, pop: d.precipprob ?? null, qpf: d.precip ?? null, cat: dv.cat, text: dv.text };
     for (const h of d.hours || []) {
       const v = darkSkyIcon(h.icon, h.conditions);
-      hourly.push({ t: h.datetimeEpoch * 1000, temp: h.temp, pop: h.precipprob ?? null, cat: v.cat, text: v.text, night: v.night, wind: h.windspeed });
+      hourly.push({ t: h.datetimeEpoch * 1000, temp: h.temp, pop: h.precipprob ?? null, qpf: h.precip ?? null, cat: v.cat, text: v.text, night: v.night, wind: h.windspeed });
     }
   }
   return { current, hourly, daily, cost: j.queryCost, note: "Visual Crossing's model blend" };
@@ -417,7 +443,8 @@ async function fetchOWM(loc, signal) {
   };
   const pts = (fc.list || []).map(x => {
     const w = x.weather?.[0] || {};
-    return { t: x.dt * 1000, temp: x.main?.temp, pop: isNum(x.pop) ? Math.round(x.pop * 100) : null, cat: owmCat(w.id), text: cap(w.description), night: x.sys?.pod === "n", wind: x.wind?.speed };
+    const blk = (x.rain?.["3h"] ?? 0) + (x.snow?.["3h"] ?? 0);
+    return { t: x.dt * 1000, temp: x.main?.temp, pop: isNum(x.pop) ? Math.round(x.pop * 100) : null, qpf: MM(blk), cat: owmCat(w.id), text: cap(w.description), night: x.sys?.pod === "n", wind: x.wind?.speed };
   }).sort((a, b) => a.t - b.t);
   // The forecast starts at the next 3-hour step; start from current conditions so "now" isn't blank.
   const h0 = Math.floor(Date.now() / 3600e3) * 3600e3;
@@ -432,10 +459,11 @@ async function fetchOWM(loc, signal) {
       const t = a.t + k * 3600e3;
       const temp = b && isNum(a.temp) && isNum(b.temp) ? a.temp + (b.temp - a.temp) * k / steps : a.temp;
       const h = localHour(t, tz);
-      hourly.push({ ...a, t, temp, night: k === 0 ? a.night : (h < 7 || h >= 18), interp: k > 0 });
+      hourly.push({ ...a, t, temp, qpf: isNum(a.qpf) ? a.qpf / Math.max(1, b ? steps : 3) : null, night: k === 0 ? a.night : (h < 7 || h >= 18), interp: k > 0 });
     }
   }
   const daily = dailyFromPoints(hourly, tz);
+  addDailyQpf(daily, hourly, tz, { overwrite: true });
   const today = dayKey(Date.now(), tz);
   if (daily[today]) daily[today].partial = true;
   for (const v of Object.values(daily)) v.text = catLabel(v.cat, false);
@@ -455,16 +483,17 @@ async function fetchPirate(loc, signal) {
   };
   const hourly = (j.hourly?.data || []).map(h => {
     const v = conv(h);
-    return { t: h.time * 1000, temp: h.temperature, pop: isNum(h.precipProbability) ? h.precipProbability * 100 : null, cat: v.cat, text: v.text, night: v.night, wind: h.windSpeed };
+    return { t: h.time * 1000, temp: h.temperature, pop: isNum(h.precipProbability) ? h.precipProbability * 100 : null, qpf: isNum(h.precipIntensity) ? h.precipIntensity : null, cat: v.cat, text: v.text, night: v.night, wind: h.windSpeed };
   });
   const daily = {};
   for (const d of j.daily?.data || []) {
     const v = conv(d);
     daily[dayKey(d.time * 1000 + 12 * 3600e3, tz)] = {
       hi: d.temperatureMax ?? d.temperatureHigh, lo: d.temperatureMin ?? d.temperatureLow,
-      pop: isNum(d.precipProbability) ? d.precipProbability * 100 : null, cat: v.cat, text: v.text,
+      pop: isNum(d.precipProbability) ? d.precipProbability * 100 : null, qpf: isNum(d.precipAccumulation) ? d.precipAccumulation : null, cat: v.cat, text: v.text,
     };
   }
+  addDailyQpf(daily, hourly, tz, { overwrite: true });   // hourly rates (in/hr) summed: liquid total
   return { current, hourly, daily, note: "NOAA models (HRRR, NBM, GFS)" };
 }
 
@@ -491,7 +520,8 @@ async function fetchTomorrow(loc, signal) {
   const hourly = (j.timelines?.hourly || []).map(h => {
     const v = h.values || {}, t = Date.parse(h.time);
     const [cat, text] = TIO[v.weatherCode] || ["cloudy", "—"];
-    return { t, temp: v.temperature, pop: v.precipitationProbability ?? null, cat, text, night: isNight(t), wind: v.windSpeed, windDir: v.windDirection, humidity: v.humidity, feels: v.temperatureApparent };
+    const qpf = v.rainAccumulation ?? v.rainIntensity;   // inches (imperial units)
+    return { t, temp: v.temperature, pop: v.precipitationProbability ?? null, qpf: isNum(qpf) ? qpf : null, cat, text, night: isNight(t), wind: v.windSpeed, windDir: v.windDirection, humidity: v.humidity, feels: v.temperatureApparent };
   });
   if (!hourly.length) throw new Error("no hourly data");
   const now = Date.now();
@@ -501,8 +531,9 @@ async function fetchTomorrow(loc, signal) {
   for (const d of days) {
     const v = d.values || {};
     const [cat, text] = TIO[v.weatherCodeMax ?? v.weatherCodeMin] || ["cloudy", "—"];
-    daily[dayKey(Date.parse(d.time) + 3 * 3600e3, tz)] = { hi: v.temperatureMax, lo: v.temperatureMin, pop: v.precipitationProbabilityMax ?? v.precipitationProbabilityAvg ?? null, cat, text };
+    daily[dayKey(Date.parse(d.time) + 3 * 3600e3, tz)] = { hi: v.temperatureMax, lo: v.temperatureMin, pop: v.precipitationProbabilityMax ?? v.precipitationProbabilityAvg ?? null, qpf: v.rainAccumulationSum ?? null, cat, text };
   }
+  addDailyQpf(daily, hourly, tz, { overwrite: true });   // calendar-day totals from the hourly amounts
   return { current, hourly, daily, note: "Tomorrow.io's own model blend" };
 }
 
@@ -519,8 +550,8 @@ async function fetchWeatherAPI(loc, signal) {
   const hourly = [], daily = {};
   for (const fd of j.forecast?.forecastday || []) {
     const d = fd.day || {};
-    daily[fd.date] = { hi: d.maxtemp_f, lo: d.mintemp_f, pop: pop(d), cat: catFromText(d.condition?.text), text: d.condition?.text };
-    for (const h of fd.hour || []) hourly.push({ t: h.time_epoch * 1000, temp: h.temp_f, pop: pop(h), cat: catFromText(h.condition?.text), text: h.condition?.text, night: h.is_day === 0, wind: h.wind_mph });
+    daily[fd.date] = { hi: d.maxtemp_f, lo: d.mintemp_f, pop: pop(d), qpf: d.totalprecip_in ?? null, cat: catFromText(d.condition?.text), text: d.condition?.text };
+    for (const h of fd.hour || []) hourly.push({ t: h.time_epoch * 1000, temp: h.temp_f, pop: pop(h), qpf: h.precip_in ?? null, cat: catFromText(h.condition?.text), text: h.condition?.text, night: h.is_day === 0, wind: h.wind_mph });
   }
   return { current, hourly, daily, note: "Free plan: 3-day forecast" };
 }
