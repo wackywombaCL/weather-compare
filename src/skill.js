@@ -63,6 +63,7 @@ export const ELEMENTS = {
   timing: { label: "Rain timing",   err: s => s.rain === "hit" ? absv(s.timing) : null, scale: 1.0, min: 2, fmt: "hours" },
   amount: { label: "Rain amount",   err: (s, d) => isNum(s.qpfErr) && (d?.obs?.rained || s.qpf >= 0.01) ? Math.abs(s.qpfErr) : null, scale: 0.05, min: 2, fmt: "inches" },
   wind:   { label: "Wind",          err: s => s.windMae,      scale: 1.0,  min: 3, fmt: "mph" },
+  humidity: { label: "Humidity",    err: s => s.humMae,       scale: 3.0,  min: 3, fmt: "pct" },
 };
 export function elementSkill(days, { locs = null, lead = 0, n = 7, before = null } = {}) {
   const pool = days.filter(d => (d.lead ?? 0) === lead && !d.partial && (!locs || locs.includes(d.loc)) && (!before || d.date < before));

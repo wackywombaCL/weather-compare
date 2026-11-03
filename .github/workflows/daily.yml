@@ -53,7 +53,11 @@ jobs:
             echo "No new data."
           else
             git commit -m "Forecast log $(TZ=America/Los_Angeles date +%F)"
-            git push
+            # The lightning job may have pushed in the meantime: rebase and retry.
+            for i in 1 2 3 4; do
+              git pull --rebase -q origin main && git push -q && break
+              sleep $((i * 3))
+            done
           fi
 
   deploy:

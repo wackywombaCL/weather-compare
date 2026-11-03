@@ -1,9 +1,9 @@
 // Service worker: makes the home-screen app open fast and keep working offline.
 // Everything is "network first": when online you always get fresh code and weather; when the
 // network is slow or gone, the last saved copy is used instead.
-const SHELL = "wc-shell-v1";
+const SHELL = "wc-shell-v2";
 const API = "wc-api-v1";
-const SHELL_FILES = ["./", "index.html", "styles.css", "src/app.js", "src/sources.js", "src/accuracy.js", "src/skill.js",
+const SHELL_FILES = ["./", "index.html", "styles.css", "src/app.js", "src/sources.js", "src/accuracy.js", "src/skill.js", "src/radar.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css",
   "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
@@ -44,6 +44,8 @@ self.addEventListener("fetch", e => {
     // Data files carry a cache-busting ?t=…; store them without it so the offline copy is found.
     const key = url.pathname.includes("/data/") ? new Request(url.origin + url.pathname) : req;
     e.respondWith(networkFirst(req, SHELL, url.pathname.includes("/data/") ? 6000 : 3500, key));
+  } else if (/mesonet\.agron|cartocdn|tile\.openstreetmap/.test(url.hostname)) {
+    return;   // map and radar tiles: leave to the browser so they don't crowd out saved weather data
   } else if (url.protocol === "https:") {
     e.respondWith(networkFirst(req, API, 9000));
   }

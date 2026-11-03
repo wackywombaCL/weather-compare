@@ -279,8 +279,8 @@ function renderAverage() {
 }
 
 // ---------- Best forecast: each element from the sources that have been best at it lately ----------
-const fmtErr = (el, e) => !isNum(e) ? "—" : ({ deg: A(e), brier: e.toFixed(2), hours: "±" + e.toFixed(1) + "h", inches: R(e), mph: (state.units === "F" ? e.toFixed(1) + " mph" : (e * 1.609).toFixed(1) + " km/h") })[ELEMENTS[el].fmt];
-const ERR_WORD = { deg: "avg miss", brier: "score (0 = perfect)", hours: "avg timing miss", inches: "avg amount miss", mph: "avg miss" };
+const fmtErr = (el, e) => !isNum(e) ? "—" : ({ deg: A(e), brier: e.toFixed(2), hours: "±" + e.toFixed(1) + "h", inches: R(e), mph: (state.units === "F" ? e.toFixed(1) + " mph" : (e * 1.609).toFixed(1) + " km/h"), pct: e.toFixed(1) + " pts" })[ELEMENTS[el].fmt];
+const ERR_WORD = { pct: "avg miss", deg: "avg miss", brier: "score (0 = perfect)", hours: "avg timing miss", inches: "avg amount miss", mph: "avg miss" };
 function wstd(pairs, w) {
   const v = pairs.filter(([id, x]) => isNum(x) && (!w || w[id]));
   if (v.length < 2) return null;
@@ -314,10 +314,15 @@ function renderBest() {
     const rain = isNum(pop) && pop > RAIN_SHOW_POP ? avgRainStart(ok, d.key, i === 0 ? nowHour : null, wt) : null;
     const d0 = localHourStart(d.key, 7, tz), d1 = localHourStart(d.key, 19, tz);
     const wind = wmean(ok.map(s => { const v = state.results[s.id].data.hourly.filter(h => h.t >= Math.max(d0, i === 0 ? nowHour : 0) && h.t < d1).map(h => h.wind).filter(isNum); return [s.id, v.length ? Math.max(...v) : null]; }), ww);
+    // Humidity range for the rest of the day (lowest–highest), weighted toward the best humidity sources.
+    const wu = W(i, "humidity");
+    const hr0 = Math.max(localHourStart(d.key, 0, tz), i === 0 ? nowHour : 0), hr1 = localHourStart(d.key, 23, tz) + 3600e3;
+    const humMin = wmean(ok.map(s => { const v = state.results[s.id].data.hourly.filter(h => h.t >= hr0 && h.t < hr1).map(h => h.humidity).filter(isNum); return [s.id, v.length ? Math.min(...v) : null]; }), wu);
+    const humMax = wmean(ok.map(s => { const v = state.results[s.id].data.hourly.filter(h => h.t >= hr0 && h.t < hr1).map(h => h.humidity).filter(isNum); return [s.id, v.length ? Math.max(...v) : null]; }), wu);
     const spread = wstd(ds.map(([id, x]) => [id, x.hi]), wh);
     const conf = !isNum(spread) ? null : spread <= 1.5 ? "High" : spread <= 3 ? "Medium" : "Low";
     const cat = isNum(pop) && pop >= 50 ? "rain" : mode(ds.map(([, x]) => x.cat));
-    return { d, i, hi, lo, pop, qpf, rain, wind, spread, conf, cat };
+    return { d, i, hi, lo, pop, qpf, rain, wind, humMin, humMax, spread, conf, cat };
   });
   const t = dayInfo[0];
   const cur = wmean(ok.map(s => [s.id, state.results[s.id].data.current.temp]), W(0, "temp"));
@@ -334,6 +339,7 @@ function renderBest() {
           ${t.rain ? pill(`🌧️ ${t.rain.now ? "raining now" : "starts ~" + esc(fmtTime(t.rain.t, tz))}`, `Weighted toward the sources best at rain timing (${t.rain.n} of ${t.rain.of} sources call for rain)`) : ""}
           ${wetAmt(t.qpf) ? pill(`☔ ${R(t.qpf)}`, "Rain total, weighted toward the sources best at amounts") : ""}
           ${isNum(t.wind) ? pill(`💨 up to ${W_(t.wind)}`, "Peak daytime wind, weighted toward the sources best at wind") : ""}
+          ${isNum(t.humMin) ? pill(`Humidity ${Math.round(t.humMin)}–${Math.round(t.humMax)}%`, "Lowest to highest humidity for the rest of today, weighted toward the sources best at humidity") : ""}
         </div>
       </div>
       <div class="best-from">
@@ -594,17 +600,19 @@ $("settings").addEventListener("close", () => {
 });
 
 // ---------- Tabs ----------
+const TABS = { forecast: ["tabForecast", "viewForecast"], accuracy: ["tabAccuracy", "viewAccuracy"], radar: ["tabRadar", "viewRadar"] };
+let radarMod = null;
 function showTab(name) {
-  const acc = name === "accuracy";
-  $("tabForecast").setAttribute("aria-selected", String(!acc));
-  $("tabAccuracy").setAttribute("aria-selected", String(acc));
-  $("viewForecast").hidden = acc;
-  $("viewAccuracy").hidden = !acc;
-  if (location.hash !== (acc ? "#accuracy" : "")) history.replaceState(null, "", acc ? "#accuracy" : location.pathname + location.search);
-  if (acc) renderAccuracy(); else renderAll();
+  if (!TABS[name]) name = "forecast";
+  for (const [k, [tab, view]] of Object.entries(TABS)) { $(tab).setAttribute("aria-selected", String(k === name)); $(view).hidden = k !== name; }
+  const hash = name === "forecast" ? "" : "#" + name;
+  if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname + location.search);
+  if (name === "accuracy") renderAccuracy();
+  else if (name === "forecast") renderAll();
+  if (name === "radar") (radarMod ||= import("./radar.js")).then(m => m.showRadar());
+  else radarMod?.then(m => m.hideRadar());
 }
-$("tabForecast").addEventListener("click", () => showTab("forecast"));
-$("tabAccuracy").addEventListener("click", () => showTab("accuracy"));
+for (const k of Object.keys(TABS)) $(TABS[k][0]).addEventListener("click", () => showTab(k));
 
 // ---------- Controls ----------
 function setLocation(loc) {
@@ -665,7 +673,7 @@ document.addEventListener("click", e => { if (!e.target.closest(".search")) sug.
 // ---------- Go ----------
 loadAll();
 initAccuracy().then(() => { recentCache = null; renderAll(); });
-showTab(location.hash === "#accuracy" ? "accuracy" : "forecast");
+showTab(location.hash.slice(1) || "forecast");
 setInterval(() => { if (document.visibilityState === "visible") loadAll(); }, REFRESH_MS);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.fetchedAt && Date.now() - state.fetchedAt > REFRESH_MS) { loadAll(); initAccuracy().then(renderAll); }
