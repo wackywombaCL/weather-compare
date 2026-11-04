@@ -16,6 +16,7 @@ const TZ = "America/Los_Angeles";
 const DATA = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
 const STATE = path.join(DATA, "nfl-alerts.json");
 const SITE = "https://wackywombacl.github.io/weather-compare/#nfl";
+const SITE_NFL = "https://wackywombacl.github.io/weather-compare/nfl/";
 const now = process.env.NOW ? Date.parse(process.env.NOW) : Date.now();
 const DRY = !!process.env.DRY_RUN;
 setRequestInit({ headers: { "User-Agent": "weather-compare/1.0 (github.com/wackywombaCL/weather-compare)" } });
@@ -64,8 +65,10 @@ for (const d of todo) {
   const body = hits.map(h => `${h.g.short} · ${kickTxt(Date.parse(h.g.date))} PT · ${h.st.name}\n  ${h.sig.map(f => `${f.ic} ${f.t}`).join("\n  ")}${h.agree ? `\n  Models agree: ${h.agree.level}` : ""}`).join("\n");
   const title = `${d.title}: ${hits.length} game${hits.length > 1 ? "s" : ""}`;
   console.log(`NOTIFY [${title}]\n${body}`);
-  if (!DRY && process.env.NTFY_TOPIC) {
-    try { await fetch(`https://ntfy.sh/${encodeURIComponent(process.env.NTFY_TOPIC)}`, { method: "POST", body, headers: { Title: title.replace(/[^\x20-\x7e]/g, ""), Tags: "football", Priority: "high", Click: SITE } }); }
+  // Your main channel, plus an NFL-only channel (NTFY_NFL_TOPIC) that others can subscribe to.
+  const topics = [...new Set([process.env.NTFY_TOPIC, process.env.NTFY_NFL_TOPIC].filter(Boolean))];
+  for (const topic of DRY ? [] : topics) {
+    try { await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, { method: "POST", body, headers: { Title: title.replace(/[^\x20-\x7e]/g, ""), Tags: "football", Priority: "high", Click: topic === process.env.NTFY_NFL_TOPIC ? SITE_NFL : SITE } }); }
     catch (e) { console.log("notification failed:", e.message); }
   }
 }

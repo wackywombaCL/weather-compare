@@ -2,7 +2,7 @@
 // 3-hour game, 1 h extra for overtime), highlighting rain, snow, wind, cold/heat, lightning
 // and fog, plus how much rain fell in the 48 hours before (field conditions).
 // Schedule: data/nfl.json (from ESPN, refreshed by a GitHub job). Forecasts: Open-Meteo.
-import { $, esc, store, T, R } from "./app.js";
+import { $, esc, store, T, R } from "./common.js";
 import { findStadium } from "./stadiums.js";
 import { icon, wmoInfo, getJSON, isNum } from "./sources.js";
 import { LIMITS, fetchStadiumWeather, gameWeather, flagsFor, modelAgreement, windVsField, fieldRuns, compass, MODEL_NAMES } from "./nflwx.js";
@@ -36,7 +36,7 @@ const mph = v => !isNum(v) ? "—" : Math.round(v);
 
 async function loadSchedule() {
   const bust = "?t=" + Math.floor(Date.now() / 300000);
-  for (const url of [RAW + bust, "data/nfl.json" + bust]) {
+  for (const url of [RAW + bust, new URL("../data/nfl.json", import.meta.url).href + bust]) {
     try { const r = await fetch(url, { cache: "no-store" }); if (r.ok) return await r.json(); } catch {}
   }
   return null;
@@ -131,7 +131,7 @@ export async function showNFL(force = false) {
   el.innerHTML = `
     <div class="nflhead">
       <h2>${sched.seasonType === 3 ? "Playoffs" : "Week"} ${esc(sched.week ?? "")} · ${games.length} games, ${outdoor.length} outdoors</h2>
-      <span class="sub2">Schedule updated ${esc(kickLbl(sched.updated, MY_TZ))}</span>
+      <span class="sub2">Schedule updated ${esc(kickLbl(sched.updated, MY_TZ))}${location.pathname.includes("/nfl/") ? "" : ` · <a href="nfl/">Open as its own app ↗</a>`}</span>
     </div>
     ${watch.length ? `<div class="panel watch"><h3>⚠️ Weather watch</h3><ul>${watch.map(x => `<li><a href="#g${esc(x.g.id)}">${helmet(x.g.away)}${helmet(x.g.home, true)} ${esc(x.g.short)}</a> · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))}: ${x.flags.map(f => `<span class="flag ${f.lvl}">${f.ic} ${esc(f.t)}</span>`).join(" ")}</li>`).join("")}</ul></div>`
       : `<div class="panel watch ok">✓ No significant weather expected for this week's outdoor games${outdoor.some(x => !x.wx) ? " (some forecasts aren't available yet)" : ""}.</div>`}

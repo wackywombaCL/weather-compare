@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>NFL Game Weather</title>
+<meta name="description" content="Stadium forecasts for this week's outdoor NFL games: rain, snow, wind, cold, lightning and field conditions.">
+<meta name="theme-color" content="#111110" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NFL Weather">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  .nflapp-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .nflapp-top h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .nflapp-top h1 img { width: 28px; height: 28px; border-radius: 7px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="nflapp-top">
+    <h1><img src="icons/icon-192.png" alt="">NFL Game Weather</h1>
+    <button class="btn" id="refresh" title="Refresh">↻</button>
+  </header>
+  <div id="nflBody"><p class="empty">Loading this week's games…</p></div>
+  <footer>
+    Schedule: ESPN. Forecasts: Open-Meteo (CC BY 4.0), including NOAA, ECMWF, DWD (ICON) and Environment Canada (GEM) models.
+    Field directions: &copy; OpenStreetMap contributors. Part of <a href="../">Weather Compare</a>.
+  </footer>
+</div>
+<script type="module">
+  import { showNFL } from "../src/nfl.js";
+  showNFL();
+  document.getElementById("refresh").addEventListener("click", () => showNFL(true));
+  // Refresh when coming back to the app after a while.
+  let last = Date.now();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Date.now() - last > 15 * 60e3) { last = Date.now(); showNFL(true); } });
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("../sw.js").catch(() => {});
+</script>
+</body>
+</html>

@@ -9,10 +9,8 @@ const REFRESH_MS = 15 * 60 * 1000;
 const MAX_SELECTED = 4;
 
 // ---------- Storage (best effort) ----------
-export const store = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
-};
+import { store, $, esc, T, R } from "./common.js";
+export { store, $, esc, T, R };
 
 // ---------- State ----------
 export const state = {
@@ -36,17 +34,10 @@ const applyProxy = () => setProxy({ url: store.get("wc.proxyUrl", "") || PROXY_U
 applyProxy();
 
 // ---------- Formatting ----------
-export const $ = id => document.getElementById(id);
-export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-export const T = f => !isNum(f) ? "—" : Math.round(state.units === "F" ? f : (f - 32) * 5 / 9) + "°";
 export const D = (d, digits = 0) => { if (!isNum(d)) return "—"; const v = state.units === "F" ? d : d * 5 / 9; const r = +v.toFixed(digits); return (r > 0 ? "+" : r < 0 ? "−" : "") + Math.abs(r).toFixed(digits) + "°"; };
 export const A = (d, digits = 1) => !isNum(d) ? "—" : (state.units === "F" ? d : d * 5 / 9).toFixed(digits) + "°";
 const W = mph => !isNum(mph) ? "—" : state.units === "F" ? Math.round(mph) + " mph" : Math.round(mph * 1.609) + " km/h";
 const P = p => !isNum(p) ? "—" : Math.round(p) + "%";
-// Rain amounts: inches (°F mode) or millimeters (°C mode).
-export const R = (inch, unit = true) => !isNum(inch) ? "—" : state.units === "F"
-  ? (inch < 0.005 ? "0" : unit ? inch.toFixed(inch < 10 ? 2 : 1) + " in" : inch.toFixed(2).replace(/^0\./, "."))
-  : (inch * 25.4 < 0.5 ? "0" : (inch * 25.4).toFixed(inch * 25.4 < 10 ? 1 : 0)) + (unit ? " mm" : "");
 const wetAmt = inch => isNum(inch) && inch >= 0.005;
 const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
 const dir = d => typeof d === "string" ? d : isNum(d) ? COMPASS[Math.round(d / 22.5) % 16] : "";

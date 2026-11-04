@@ -38,6 +38,7 @@ jobs:
         continue-on-error: true
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_NFL_TOPIC: ${{ secrets.NTFY_NFL_TOPIC }}
       - name: Save lightning data (only when it changed)
         run: |
           git config user.name "github-actions[bot]"
