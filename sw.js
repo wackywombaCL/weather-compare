@@ -1,7 +1,7 @@
 // Service worker: makes the home-screen app open fast and keep working offline.
 // Everything is "network first": when online you always get fresh code and weather; when the
 // network is slow or gone, the last saved copy is used instead.
-const SHELL = "wc-shell-v8";
+const SHELL = "wc-shell-v9";
 const API = "wc-api-v1";
 const SHELL_FILES = ["./", "index.html", "styles.css", "src/app.js", "src/sources.js", "src/accuracy.js", "src/skill.js", "src/radar.js", "src/nfl.js", "src/nflwx.js", "src/stadiums.js", "src/config.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css",
   "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/apple-touch-icon.png"];
@@ -19,7 +19,12 @@ function withTimeout(p, ms) {
 async function networkFirst(req, cacheName, ms, cacheKey = req) {
   const cache = await caches.open(cacheName);
   try {
-    const res = await withTimeout(fetch(req), ms);
+    // App files: always ask the server whether there's a newer version (GitHub Pages otherwise
+    // lets browsers reuse files for 10 minutes, so an update could take that long to show up).
+    const go = cacheName !== SHELL ? fetch(req)
+      : req.mode === "navigate" ? fetch(req.url, { cache: "no-cache", credentials: "same-origin" })
+      : fetch(req, { cache: "no-cache" });
+    const res = await withTimeout(go, ms);
     if (res.ok) {
       cache.put(cacheKey, res.clone());
       if (cacheName === API) prune(cache);
