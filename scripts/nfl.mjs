@@ -29,7 +29,8 @@ const games = (j.events || []).map(e => {
   const c = e.competitions?.[0] || {};
   const side = h => {
     const t = (c.competitors || []).find(x => x.homeAway === h) || {};
-    return { abbr: t.team?.abbreviation, name: t.team?.displayName, short: t.team?.shortDisplayName, logo: t.team?.logo, score: t.score ?? null };
+    return { abbr: t.team?.abbreviation, name: t.team?.displayName, short: t.team?.shortDisplayName, logo: t.team?.logo,
+      color: t.team?.color || null, alt: t.team?.alternateColor || null, score: t.score ?? null };
   };
   const v = c.venue || {};
   return {

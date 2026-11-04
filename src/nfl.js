@@ -12,6 +12,21 @@ const MY_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const H = 3600e3;
 let loaded = null;
 
+// Small helmet drawn in the team's colors (ESPN's primary + alternate). Away faces right, home faces left.
+const hex = c => /^[0-9a-f]{6}$/i.test(c || "") ? "#" + c : null;
+function helmet(team, faceLeft = false) {
+  const main = hex(team?.color) || "#7a7974";
+  let alt = hex(team?.alt) || "#ffffff";
+  if (alt.toLowerCase() === main.toLowerCase()) alt = "#ffffff";
+  return `<svg class="helmet" viewBox="0 0 26 20" aria-hidden="true"${faceLeft ? ' style="transform:scaleX(-1)"' : ""}>
+    <path d="M2.5 12.2C2.5 5.6 7.3 1.8 12.6 1.8c5.4 0 8.9 3.3 8.9 7.6v2.4h-4.4l-2 3.4H6.3c-2.3 0-3.8-1.2-3.8-3z" fill="${main}" stroke="rgba(0,0,0,.35)" stroke-width=".8"/>
+    <path d="M6.6 3.9c3-1.6 7.6-1.9 11.4.3" fill="none" stroke="${alt}" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="10.4" cy="10.3" r="1.4" fill="rgba(0,0,0,.45)"/>
+    <path d="M17.1 11.8h6.4M18.3 8.9h5.2M22.6 8.9v6.3M17.6 15.2h5.8" fill="none" stroke="#9a9890" stroke-width="1.3" stroke-linecap="round"/>
+  </svg>`;
+}
+const withHelmet = (team, faceLeft, txt) => `<span class="tm">${helmet(team, faceLeft)}${txt}</span>`;
+
 const fmt = (ms, tz, o) => new Intl.DateTimeFormat("en-US", { timeZone: tz, ...o }).format(ms);
 const hourLbl = (ms, tz) => fmt(ms, tz, { hour: "numeric" }).replace(" ", "").toLowerCase();
 const kickLbl = (ms, tz) => fmt(ms, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).replace(/ (AM|PM)/, (m, x) => x.toLowerCase());
@@ -73,7 +88,7 @@ function gameCard(g, v, wx, flags, gw, agree) {
   }).join("");
   return `<article class="game lvl-${lvl}">
     <header>
-      <div class="gm"><b>${esc(g.away.name || g.away.abbr)}</b> at <b>${esc(g.home.name || g.home.abbr)}</b>${live ? ` <span class="live">LIVE</span>` : ""}${final ? ` <span class="fin">Final</span>` : ""}${score}</div>
+      <div class="gm">${withHelmet(g.away, false, `<b>${esc(g.away.name || g.away.abbr)}</b>`)} at ${withHelmet(g.home, true, `<b>${esc(g.home.name || g.home.abbr)}</b>`)}${live ? ` <span class="live">LIVE</span>` : ""}${final ? ` <span class="fin">Final</span>` : ""}${score}</div>
       <div class="gsub">${esc(kickLbl(kick, MY_TZ))} ${esc(tzAbbr(kick, MY_TZ))}${tz && tz !== MY_TZ ? ` (${esc(kickLbl(kick, tz).split(", ").pop())} ${esc(tzAbbr(kick, tz))} local)` : ""}${g.tv ? " · " + esc(g.tv) : ""}</div>
       <div class="gsub">${esc(v.name)}${g.venue?.city ? ", " + esc(g.venue.city) : ""}${v.surface ? ` · ${v.surface === "grass" ? "grass field" : "artificial turf"}` : ""}${fieldRuns(v.axis) ? ` · field runs ${fieldRuns(v.axis)}` : ""}</div>
       ${agree ? `<div class="gsub agree">Models agree: <span class="conf conf-${agree.level.toLowerCase()}" title="${esc(agree.n)} models (${esc(Object.values(MODEL_NAMES).join(", "))})">${agree.level}</span> <span class="sub2">${esc(agree.notes.join(" · "))}</span></div>` : ""}
@@ -118,10 +133,10 @@ export async function showNFL(force = false) {
       <h2>${sched.seasonType === 3 ? "Playoffs" : "Week"} ${esc(sched.week ?? "")} · ${games.length} games, ${outdoor.length} outdoors</h2>
       <span class="sub2">Schedule updated ${esc(kickLbl(sched.updated, MY_TZ))}</span>
     </div>
-    ${watch.length ? `<div class="panel watch"><h3>⚠️ Weather watch</h3><ul>${watch.map(x => `<li><a href="#g${esc(x.g.id)}">${esc(x.g.short)}</a> · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))}: ${x.flags.map(f => `<span class="flag ${f.lvl}">${f.ic} ${esc(f.t)}</span>`).join(" ")}</li>`).join("")}</ul></div>`
+    ${watch.length ? `<div class="panel watch"><h3>⚠️ Weather watch</h3><ul>${watch.map(x => `<li><a href="#g${esc(x.g.id)}">${helmet(x.g.away)}${helmet(x.g.home, true)} ${esc(x.g.short)}</a> · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))}: ${x.flags.map(f => `<span class="flag ${f.lvl}">${f.ic} ${esc(f.t)}</span>`).join(" ")}</li>`).join("")}</ul></div>`
       : `<div class="panel watch ok">✓ No significant weather expected for this week's outdoor games${outdoor.some(x => !x.wx) ? " (some forecasts aren't available yet)" : ""}.</div>`}
     <div class="games">${outdoor.map(x => `<div id="g${esc(x.g.id)}">${gameCard(x.g, x.v, x.wx, x.flags, x.gw, x.agree)}</div>`).join("")}</div>
-    ${covered.length ? `<div class="panel covered"><h3>Under a roof: weather won't matter</h3><ul>${covered.sort((a, b) => Date.parse(a.g.date) - Date.parse(b.g.date)).map(x => `<li>${esc(x.g.short)} · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))} · ${esc(x.v.name)} (${roofWord(x.v.roof)}${x.v.roof === "retractable" ? ", normally closed in bad weather" : ""})</li>`).join("")}</ul></div>` : ""}
+    ${covered.length ? `<div class="panel covered"><h3>Under a roof: weather won't matter</h3><ul>${covered.sort((a, b) => Date.parse(a.g.date) - Date.parse(b.g.date)).map(x => `<li>${helmet(x.g.away)}${helmet(x.g.home, true)} ${esc(x.g.short)} · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))} · ${esc(x.v.name)} (${roofWord(x.v.roof)}${x.v.roof === "retractable" ? ", normally closed in bad weather" : ""})</li>`).join("")}</ul></div>` : ""}
     <details class="how"><summary>What gets highlighted</summary><ul>
       <li><b>Forecast window:</b> 5 hours per game: 1 hour before kickoff, the 3-hour game, and 1 extra hour for overtime. Times are in your time zone. Forecasts come from Open-Meteo (US: NOAA's high-resolution models).</li>
       <li><b>Red (significant):</b> heavy rain (0.30"+ during the game, or 0.15"+ in an hour), 1"+ of snow, sustained wind 20+ mph or gusts 35+, feels-like 15° or colder / 100°+, thunderstorms (lightning delays), dense fog, or 1.25"+ of rain on a grass field in the 48 hours before.</li>

@@ -387,3 +387,8 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .gtable .rel { color: var(--text-2); font-weight: 600; }
 .game .agree { margin-top: 3px; }
 .game .agree .conf { font-size: 11px; }
+
+.helmet { width: 22px; height: 17px; vertical-align: -3px; flex: none; }
+.tm { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.watch .helmet, .covered .helmet { width: 18px; height: 14px; margin-right: 1px; }
+.gtable .rel { display: block; }
