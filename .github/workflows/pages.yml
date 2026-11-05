@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment2.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,4 +30,12 @@ jobs:
         with:
           path: .
       - id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      # GitHub Pages occasionally returns a temporary server error: wait and try once more.
+      - name: Retry after a pause if the first attempt failed
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 60
+      - id: deployment2
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4
