@@ -392,3 +392,15 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .tm { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .watch .helmet, .covered .helmet { width: 18px; height: 14px; margin-right: 1px; }
 .gtable .rel { display: block; }
+
+/* NFL forecast accuracy */
+#nflAcc h2 { font-size: 16px; margin: 0 0 4px; }
+.nflgrid td.best .badge { outline: 2px solid var(--text); }
+.recap { list-style: none; margin: 0; padding: 0; }
+.recap li { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.recap li:last-child { border-bottom: 0; }
+@media (max-width: 480px) {
+  .nflgrid th, .nflgrid td { padding: 6px 3px; font-size: 12px; }
+  .nflgrid tbody th { white-space: normal; max-width: 92px; }
+  .nflgrid .badge { padding: 3px 5px; gap: 3px; }
+}

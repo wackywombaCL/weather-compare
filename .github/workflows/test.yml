@@ -24,3 +24,5 @@ jobs:
         run: for f in src/*.js scripts/*.mjs worker/index.js sw.js tests/*.mjs; do node --check "$f" || exit 1; done
       - name: Simulated scoring test
         run: node tests/simulate.test.mjs
+      - name: NFL lock-in and verification test
+        run: node tests/nfl.test.mjs

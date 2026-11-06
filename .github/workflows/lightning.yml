@@ -39,11 +39,15 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_NFL_TOPIC: ${{ secrets.NTFY_NFL_TOPIC }}
+      - name: NFL forecast lock-in and verification
+        run: node scripts/nfl-verify.mjs
+        continue-on-error: true
       - name: Save lightning data (only when it changed)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/lightning.json data/nfl-alerts.json 2>/dev/null || git add data/lightning.json
+          git add data/lightning.json
+          for f in data/nfl-alerts.json data/nfl; do if [ -e "$f" ]; then git add "$f"; fi; done
           if git diff --cached --quiet; then echo "No change."; exit 0; fi
           git commit -m "Lightning data $(date -u +%H:%MZ)"
           for i in 1 2 3 4; do

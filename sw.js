@@ -1,7 +1,7 @@
 // Service worker: makes the home-screen app open fast and keep working offline.
 // Everything is "network first": when online you always get fresh code and weather; when the
 // network is slow or gone, the last saved copy is used instead.
-const SHELL = "wc-shell-v10";
+const SHELL = "wc-shell-v11";
 const API = "wc-api-v1";
 const SHELL_FILES = ["./", "index.html", "styles.css", "src/app.js", "src/sources.js", "src/accuracy.js", "src/skill.js", "src/radar.js", "src/common.js", "src/nfl.js", "src/nflwx.js", "src/stadiums.js", "src/config.js", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css",
   "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/apple-touch-icon.png"];
