@@ -26,3 +26,5 @@ jobs:
         run: node tests/simulate.test.mjs
       - name: NFL lock-in and verification test
         run: node tests/nfl.test.mjs
+      - name: NFL week rollover test
+        run: node tests/nfl-week.test.mjs

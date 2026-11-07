@@ -404,3 +404,9 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
   .nflgrid tbody th { white-space: normal; max-width: 92px; }
   .nflgrid .badge { padding: 3px 5px; gap: 3px; }
 }
+
+/* NFL: finished games */
+.donewk { margin-top: 22px; }
+.donewk h2 { font-size: 16px; margin: 0 0 10px; }
+.donewk .game { opacity: .78; border-left-color: var(--border) !important; }
+.donewk .covered { margin-top: 10px; }

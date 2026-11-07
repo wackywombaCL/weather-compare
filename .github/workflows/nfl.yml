@@ -1,10 +1,12 @@
 name: NFL schedule
 
-# Refreshes data/nfl.json (this week's games and stadiums) for the NFL tab. The daily job also
-# does this each morning; this adds midday/evening refreshes for schedule changes and scores.
+# Refreshes data/nfl.json (this week's games, scores and stadiums) for the NFL tab every 2 hours,
+# plus runs right after 12:30am Pacific on Tuesday, when the finished week is archived and the
+# next week's games load (07:35 UTC = 12:35am PDT, 08:35 UTC = 12:35am PST; the script decides).
 on:
   schedule:
-    - cron: "17 19,23,3 * * *"
+    - cron: "17 */2 * * *"
+    - cron: "35 7,8 * * 2"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +30,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/nfl.json
+          if [ -d data/nfl/weeks ]; then git add data/nfl/weeks; fi
           if git diff --cached --quiet; then echo "No change."; exit 0; fi
           git commit -m "NFL schedule $(date -u +%F)"
           for i in 1 2 3 4; do git pull --rebase -q origin main && git push -q && exit 0; sleep $((i * 3)); done
