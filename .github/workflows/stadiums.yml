@@ -1,0 +1,36 @@
+name: Stadium forecast tracking
+
+# Every hour: locks each outdoor NFL stadium's forecast once a day (after 6am local), checks the
+# previous day's forecasts against the nearest official station (after 2am local), updates which
+# models have been best at each stadium, and refreshes the best-blend forecast every ~3 hours.
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stadiums
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/stadiums.mjs
+      - name: Save (only when something changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data/stadiums
+          if git diff --cached --quiet; then echo "No change."; exit 0; fi
+          git commit -m "Stadium tracking $(date -u +%F\ %H:%MZ)"
+          for i in 1 2 3 4; do git pull --rebase -q origin main && git push -q && exit 0; sleep $((i * 3)); done
+          exit 1

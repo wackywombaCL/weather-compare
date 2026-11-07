@@ -3,7 +3,9 @@
 // and fog, plus how much rain fell in the 48 hours before (field conditions).
 // Schedule: data/nfl.json (from ESPN, refreshed by a GitHub job). Forecasts: Open-Meteo.
 import { $, esc, store, T, R } from "./common.js";
-import { findStadium } from "./stadiums.js";
+import { findStadium, stadiumKey } from "./stadiums.js";
+import { addBest } from "./stadiumskill.js";
+import { loadData, blendNote } from "./stadiumsview.js";
 import { icon, wmoInfo, getJSON, isNum } from "./sources.js";
 import { rating } from "./skill.js";
 import { LIMITS, fetchStadiumWeather, gameWeather, flagsFor, modelAgreement, windVsField, fieldRuns, compass, MODEL_NAMES } from "./nflwx.js";
@@ -18,7 +20,7 @@ const scoreLine = g => g.home?.score != null && g.away?.score != null ? `${esc(g
 
 // ---------- Forecast accuracy (locked-in forecasts checked against stadium-area observations) ----------
 const RAW_SCORES = "https://raw.githubusercontent.com/wackywombaCL/weather-compare/main/data/nfl/scores.json";
-const SHORT = { best_match: "Blend", ecmwf_ifs025: "Euro", gfs_seamless: "GFS", icon_seamless: "ICON", gem_seamless: "GEM" };
+const SHORT = { best: "Best blend", best_match: "OM blend", ecmwf_ifs025: "Euro", gfs_seamless: "GFS", icon_seamless: "ICON", gem_seamless: "GEM" };
 const LEAD_LBL = { "48h": "2 days before", "24h": "1 day before", "3h": "3 hours before" };
 async function loadScores() {
   const bust = "?t=" + Math.floor(Date.now() / 300000);
@@ -124,7 +126,7 @@ async function weatherFor(v) {
   return data;
 }
 
-function gameCard(g, v, wx, flags, gw, agree) {
+function gameCard(g, v, wx, flags, gw, agree, W) {
   const kick = Date.parse(g.date);
   const tz = wx?.tz;
   const slots = gw?.slots || [];
@@ -151,6 +153,7 @@ function gameCard(g, v, wx, flags, gw, agree) {
       <div class="gm">${withHelmet(g.away, false, `<b>${esc(g.away.name || g.away.abbr)}</b>`)} at ${withHelmet(g.home, true, `<b>${esc(g.home.name || g.home.abbr)}</b>`)}${live ? ` <span class="live">LIVE</span>` : ""}${final ? ` <span class="fin">${g.status?.state === "post" ? "Final" : "Completed"}</span>` : ""}${score}</div>
       <div class="gsub">${esc(kickLbl(kick, MY_TZ))} ${esc(tzAbbr(kick, MY_TZ))}${tz && tz !== MY_TZ ? ` (${esc(kickLbl(kick, tz).split(", ").pop())} ${esc(tzAbbr(kick, tz))} local)` : ""}${g.tv ? " · " + esc(g.tv) : ""}</div>
       <div class="gsub">${esc(v.name)}${g.venue?.city ? ", " + esc(g.venue.city) : ""}${v.surface ? ` · ${v.surface === "grass" ? "grass field" : "artificial turf"}` : ""}${fieldRuns(v.axis) ? ` · field runs ${fieldRuns(v.axis)}` : ""}</div>
+      ${wx ? `<div class="gsub">Forecast: ${W ? `<b>best blend</b> · ${esc(blendNote(W))} <span class="sub2">(last ${W.n} checked days ${W.from === "stadium" ? "here" : "at all stadiums"}; <a href="${location.pathname.includes("/nfl/") ? "../#stadiums" : "#stadiums"}">details</a>)</span>` : `Open-Meteo blend <span class="sub2">(the best blend starts once the daily stadium tracking has a few days of results)</span>`}</div>` : ""}
       ${agree ? `<div class="gsub agree">Models agree: <span class="conf conf-${agree.level.toLowerCase()}" title="${esc(agree.n)} models (${esc(Object.values(MODEL_NAMES).join(", "))})">${agree.level}</span> <span class="sub2">${esc(agree.notes.join(" · "))}</span></div>` : ""}
     </header>
     ${flags.length ? `<div class="flags">${flags.map(x => `<span class="flag ${x.lvl}">${x.ic} ${esc(x.t)}</span>`).join("")}</div>` : `<div class="flags"><span class="flag ok">✓ No significant weather expected</span></div>`}
@@ -165,13 +168,14 @@ export async function showNFL(force = false) {
   if (!loaded || force) {
     el.innerHTML = `<p class="empty">Loading this week's games…</p>`;
     loaded = (async () => {
-      const sched = await loadSchedule();
+      const [sched, skill] = await Promise.all([loadSchedule(), loadData("stadiums/skill.json")]);
       if (!sched?.games?.length) return { sched };
       const games = await Promise.all(sched.games.map(async g => {
         const v = await venueFor(g);
         let wx = null, err = null;
-        if (v.roof === "open" && isNum(v.lat)) { try { wx = await weatherFor(v); } catch (e) { err = e.message; } }
-        return { g, v, wx, err };
+        let W = null;
+        if (v.roof === "open" && isNum(v.lat)) { try { wx = await weatherFor(v); W = addBest(wx, skill, stadiumKey(v)); } catch (e) { err = e.message; } }
+        return { g, v, wx, err, W };
       }));
       return { sched, games };
     })();
@@ -201,11 +205,11 @@ export async function showNFL(force = false) {
     ${watch.length ? `<div class="panel watch"><h3>⚠️ Weather watch</h3><ul>${watch.map(x => `<li><a href="#g${esc(x.g.id)}">${helmet(x.g.away)}${helmet(x.g.home, true)} ${esc(x.g.short)}</a> · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))}: ${x.flags.map(f => `<span class="flag ${f.lvl}">${f.ic} ${esc(f.t)}</span>`).join(" ")}</li>`).join("")}</ul></div>`
       : upcoming.length ? `<div class="panel watch ok">✓ No significant weather expected for the rest of this week's outdoor games${upcoming.some(x => !x.wx) ? " (some forecasts aren't available yet)" : ""}.</div>`
       : `<div class="panel watch ok">This week's games are done. Next week's games and forecasts load at 12:30am Pacific on Tuesday.</div>`}
-    <div class="games">${upcoming.map(x => `<div id="g${esc(x.g.id)}">${gameCard(x.g, x.v, x.wx, x.flags, x.gw, x.agree)}</div>`).join("")}</div>
+    <div class="games">${upcoming.map(x => `<div id="g${esc(x.g.id)}">${gameCard(x.g, x.v, x.wx, x.flags, x.gw, x.agree, x.W)}</div>`).join("")}</div>
     ${coveredUp.length ? `<div class="panel covered"><h3>Under a roof: weather won't matter</h3><ul>${coveredUp.map(x => `<li>${helmet(x.g.away)}${helmet(x.g.home, true)} ${esc(x.g.short)} · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))} · ${esc(x.v.name)} (${roofWord(x.v.roof)}${x.v.roof === "retractable" ? ", normally closed in bad weather" : ""})</li>`).join("")}</ul></div>` : ""}
     ${doneAll.length ? `<section class="donewk">
       <h2>Completed this week <span class="sub2">· until next week's games load (Tue 12:30am PT)</span></h2>
-      ${doneOut.length ? `<div class="games">${doneOut.map(x => `<div id="g${esc(x.g.id)}">${gameCard(x.g, x.v, x.wx, x.flags, x.gw, x.agree)}</div>`).join("")}</div>` : ""}
+      ${doneOut.length ? `<div class="games">${doneOut.map(x => `<div id="g${esc(x.g.id)}">${gameCard(x.g, x.v, x.wx, x.flags, x.gw, x.agree, x.W)}</div>`).join("")}</div>` : ""}
       ${doneCov.length ? `<div class="panel covered"><ul>${doneCov.map(x => `<li>${helmet(x.g.away)}${helmet(x.g.home, true)} ${esc(x.g.short)} · ${esc(kickLbl(Date.parse(x.g.date), MY_TZ))} · ${esc(x.v.name)} (${roofWord(x.v.roof)})${scoreLine(x.g) ? ` · <b>${scoreLine(x.g)}</b>` : ""}</li>`).join("")}</ul></div>` : ""}
     </section>` : ""}
     <section id="nflAcc" style="margin-top:22px"></section>
@@ -214,6 +218,7 @@ export async function showNFL(force = false) {
       <li><b>Red (significant):</b> heavy rain (0.30"+ during the game, or 0.15"+ in an hour), 1"+ of snow, sustained wind 20+ mph or gusts 35+, feels-like 15° or colder / 100°+, thunderstorms (lightning delays), dense fog, or 1.25"+ of rain on a grass field in the 48 hours before.</li>
       <li><b>Yellow (worth knowing):</b> any measurable rain or snow, wind 15+ mph or gusts 25+, feels-like 32° or colder / 90°+, fog under a mile, or 0.5"+ of rain in the 48 hours before kickoff.</li>
       <li><b>Wind vs. the field:</b> each field's direction was measured from its outline in OpenStreetMap. "↕ along" means the wind blows roughly end zone to end zone (helps one direction, hurts the other); "↔ cross" means across the field (hardest on kicks); "⤢ angled" is in between.</li>
+      <li><b>Best blend:</b> every outdoor stadium's forecast is tracked every day (not just on game days) and checked against the nearest official station. Each game's forecast is built from the models that have been most accurate at that stadium lately, separately for temperature, wind and rain, with temperature bias corrected. See the Stadiums tab.</li>
       <li><b>Models agree:</b> compares 5 forecast models (Open-Meteo blend, Euro, GFS, ICON, GEM) over the game window. High = within 5 mph on wind and 4° on temperature, and all agree on whether it rains or snows. Low = big disagreements: treat the forecast with caution.</li>
       <li><b>Phone alerts</b> (ntfy) go out only for significant (red) weather: Saturday 8pm, Sunday 9am and 12:45pm Pacific for the remaining games, and 1 hour before Thursday and Saturday games.</li>
       <li><b>Domes, covered and retractable-roof stadiums</b> are listed at the bottom without forecasts.</li>

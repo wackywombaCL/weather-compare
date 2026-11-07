@@ -9,7 +9,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { setRequestInit } from "../src/sources.js";
-import { findStadium } from "../src/stadiums.js";
+import { findStadium, stadiumKey } from "../src/stadiums.js";
+import { addBest } from "../src/stadiumskill.js";
 import { fetchStadiumWeather, gameWeather, flagsFor, modelAgreement } from "../src/nflwx.js";
 
 const TZ = "America/Los_Angeles";
@@ -47,6 +48,7 @@ if (!todo.length) process.exit(0);
 
 // Forecast the outdoor games involved, once each.
 const cache = new Map();
+const skill = JSON.parse(await readFile(path.join(DATA, "stadiums", "skill.json"), "utf8").catch(() => "null"));
 async function check(g) {
   const st = findStadium(g.venue?.name);
   if (!st || st.roof !== "open") return null;           // domes, roofs and unknown venues: skip
@@ -54,6 +56,7 @@ async function check(g) {
   if (!cache.has(key)) cache.set(key, await fetchStadiumWeather(st.lat, st.lon).catch(e => { console.log("forecast failed", st.name, e.message); return null; }));
   const wx = cache.get(key);
   if (!wx) return null;
+  if (!wx.models.best) addBest(wx, skill, stadiumKey(st));   // best blend from the daily stadium tracking
   const gw = gameWeather(wx, Date.parse(g.date));
   const sig = flagsFor(gw.win, gw.before, st).filter(f => f.lvl === "sig");
   return sig.length ? { g, st, sig, agree: modelAgreement(gw.byModel) } : null;

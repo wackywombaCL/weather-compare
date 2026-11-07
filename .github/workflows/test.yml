@@ -28,3 +28,5 @@ jobs:
         run: node tests/nfl.test.mjs
       - name: NFL week rollover test
         run: node tests/nfl-week.test.mjs
+      - name: Stadium tracking and best-blend test
+        run: node tests/stadiums.test.mjs

@@ -48,3 +48,7 @@ export const STADIUMS = [
   { match: /melbourne cricket|\bmcg\b/i, name: "Melbourne Cricket Ground", lat: -37.8200, lon: 144.9834, roof: "open",  surface: "grass" },
 ];
 export const findStadium = name => STADIUMS.find(s => s.match.test(name || "")) || null;
+// Short id used in the daily stadium-tracking files ("Lincoln Financial Field" → "lincoln-financial-field").
+export const stadiumKey = s => (s?.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+// Stadiums tracked every day: open-air and in the US (official hourly observations come from the NWS).
+export const TRACKED = STADIUMS.filter(s => s.roof === "open" && s.lat > 24 && s.lat < 50 && s.lon < -60);

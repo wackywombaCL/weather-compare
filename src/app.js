@@ -611,8 +611,8 @@ $("settings").addEventListener("close", () => {
 });
 
 // ---------- Tabs ----------
-const TABS = { forecast: ["tabForecast", "viewForecast"], accuracy: ["tabAccuracy", "viewAccuracy"], radar: ["tabRadar", "viewRadar"], nfl: ["tabNFL", "viewNFL"] };
-let radarMod = null, nflMod = null;
+const TABS = { forecast: ["tabForecast", "viewForecast"], accuracy: ["tabAccuracy", "viewAccuracy"], radar: ["tabRadar", "viewRadar"], nfl: ["tabNFL", "viewNFL"], stadiums: ["tabStadiums", "viewStadiums"] };
+let radarMod = null, nflMod = null, stMod = null;
 function showTab(name) {
   if (!TABS[name]) name = "forecast";
   for (const [k, [tab, view]] of Object.entries(TABS)) { $(tab).setAttribute("aria-selected", String(k === name)); $(view).hidden = k !== name; }
@@ -622,7 +622,8 @@ function showTab(name) {
   else if (name === "forecast") renderAll();
   if (name === "radar") (radarMod ||= import("./radar.js")).then(m => m.showRadar());
   if (name === "nfl") (nflMod ||= import("./nfl.js")).then(m => m.showNFL());
-  else radarMod?.then(m => m.hideRadar());
+  if (name === "stadiums") (stMod ||= import("./stadiumsview.js")).then(m => m.showStadiums());
+  if (name !== "radar") radarMod?.then(m => m.hideRadar());
 }
 for (const k of Object.keys(TABS)) $(TABS[k][0]).addEventListener("click", () => showTab(k));
 
@@ -633,7 +634,7 @@ function setLocation(loc) {
   loadAll();
 }
 document.querySelectorAll(".preset").forEach(b => b.addEventListener("click", () => setLocation({ ...PRESETS[b.dataset.preset] })));
-$("refreshBtn").addEventListener("click", () => { loadAll(true); initAccuracy().then(renderAll); if (!$("viewNFL").hidden) nflMod?.then(m => m.showNFL(true)); });
+$("refreshBtn").addEventListener("click", () => { loadAll(true); initAccuracy().then(renderAll); if (!$("viewNFL").hidden) nflMod?.then(m => m.showNFL(true)); if (!$("viewStadiums").hidden) stMod?.then(m => m.showStadiums(true)); });
 $("unitBtn").addEventListener("click", () => { state.units = state.units === "F" ? "C" : "F"; store.set("wc.units", state.units); renderAll(); renderAccuracy(); });
 document.querySelectorAll("#avgMode button").forEach(b => b.addEventListener("click", () => { state.avgMode = b.dataset.mode; store.set("wc.avgMode", state.avgMode); renderAll(); }));
 $("geoBtn").addEventListener("click", () => {
@@ -686,6 +687,7 @@ document.addEventListener("click", e => { if (!e.target.closest(".search")) sug.
 loadAll();
 initAccuracy().then(() => { recentCache = null; renderAll(); });
 showTab(location.hash.slice(1) || "forecast");
+addEventListener("hashchange", () => { const h = location.hash.slice(1); if (TABS[h]) { showTab(h); scrollTo(0, 0); } });
 setInterval(() => { if (document.visibilityState === "visible") loadAll(); }, REFRESH_MS);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.fetchedAt && Date.now() - state.fetchedAt > REFRESH_MS) { loadAll(); initAccuracy().then(renderAll); }

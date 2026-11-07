@@ -10,7 +10,8 @@ import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { setRequestInit, getJSON, isNum, cToF, mean } from "../src/sources.js";
-import { findStadium } from "../src/stadiums.js";
+import { findStadium, stadiumKey } from "../src/stadiums.js";
+import { addBest } from "../src/stadiumskill.js";
 import { fetchStadiumWeather, gameWeather, H } from "../src/nflwx.js";
 
 export const LEADS = [{ id: "48h", hours: 48 }, { id: "24h", hours: 24 }, { id: "3h", hours: 3 }];
@@ -25,18 +26,18 @@ async function readJSON(f, d) { try { return JSON.parse(await readFile(f, "utf8"
 async function writeJSON(f, data) { await mkdir(path.dirname(f), { recursive: true }); await writeFile(f, JSON.stringify(data) + "\n"); }
 
 // Compact copy of one model's 5 game hours.
-const pack = hs => {
+export const pack = hs => {
   const k = key => hs.map(h => isNum(h?.[key]) ? (key === "qpf" || key === "snow" ? r2(h[key]) : r1(h[key])) : null);
   return { temp: k("temp"), wind: k("wind"), gust: k("gust"), wdir: k("wdir"), qpf: k("qpf"), snow: k("snow"), pop: k("pop"), code: hs.map(h => h?.code ?? null) };
 };
 
 // ---------- Observations ----------
 const wetText = s => /rain|drizzle|shower|thunder|snow|sleet/i.test(s || "");
-async function observe(st, slots) {
+export async function observe(st, slots, minHours = 4) {
   if (!isNum(st.lat) || st.lat < 18 || st.lat > 50 || st.lon > -60) return null;   // NWS covers US stadiums only
   const pt = await getJSON(`https://api.weather.gov/points/${st.lat.toFixed(4)},${st.lon.toFixed(4)}`);
   const feats = (await getJSON(pt.properties.observationStations)).features || [];
-  const start = slots[0] - 30 * 60e3, end = slots[4] + H;
+  const start = slots[0] - 30 * 60e3, end = slots.at(-1) + H;
   for (const f of feats.slice(0, 4)) {
     const id = f.properties?.stationIdentifier;
     try {
@@ -48,7 +49,7 @@ async function observe(st, slots) {
       }));
       const near = t => obs.filter(o => Math.abs(o.t - t) <= 20 * 60e3 && isNum(o.temp)).sort((a, b) => Math.abs(a.t - t) - Math.abs(b.t - t))[0];
       const hours = slots.map(near);
-      if (hours.filter(Boolean).length < 4) continue;
+      if (hours.filter(Boolean).length < minHours) continue;
       const inWin = obs.filter(o => o.t >= slots[0] && o.t < end);
       // Hourly rain totals are on the routine reports at :45–:59; sum those to avoid double counting.
       const routine = inWin.filter(o => new Date(o.t).getUTCMinutes() >= 45 && isNum(o.precip));
@@ -70,7 +71,8 @@ async function observe(st, slots) {
 // ---------- Scoring ----------
 const fcWet = m => m.qpf.some(q => isNum(q) && q >= 0.01) || m.snow.some(s => isNum(s) && s >= 0.1) || m.code.some(c => c >= 51 && c !== null);
 export function scoreModel(m, ob) {
-  const d = (a, b) => a.map((x, i) => isNum(x) && isNum(b[i]) ? Math.abs(x - b[i]) : null).filter(isNum);
+  const sd = (a, b) => a.map((x, i) => isNum(x) && isNum(b[i]) ? x - b[i] : null).filter(isNum);
+  const d = (a, b) => sd(a, b).map(Math.abs);
   const td = d(m.temp, ob.temp), wd = d(m.wind, ob.wind);
   if (td.length < 3) return null;
   const tempMae = mean(td), windMae = wd.length >= 3 ? mean(wd) : null;
@@ -82,6 +84,7 @@ export function scoreModel(m, ob) {
   const score = 0.45 * clamp(100 - 10 * tempMae) + 0.35 * (isNum(windMae) ? clamp(100 - 8 * windMae) : 70) + 0.2 * (rain === "hit" || rain === "none" ? 100 : 0);
   return {
     score: r1(score), tempMae: r1(tempMae), windMae: r1(windMae), rain,
+    tempBias: r1(mean(sd(m.temp, ob.temp))), windBias: wd.length >= 3 ? r1(mean(sd(m.wind, ob.wind))) : null,
     qpf: r2(qpf), qpfErr: isNum(ob.precip) ? r2(qpf - ob.precip) : null,
     gustErr: isNum(ob.gustMax) && gustMax >= 0 ? r1(gustMax - ob.gustMax) : null,
   };
@@ -93,9 +96,14 @@ export async function run({ dataDir, now = Date.now(), log = console.log } = {})
   const gamesDir = path.join(dataDir, "nfl", "games");
   let changed = false;
   const wxCache = new Map();
+  const skill = await readJSON(path.join(dataDir, "stadiums", "skill.json"), null);   // daily stadium tracking → "best" blend
   const wxFor = async st => {
     const k = `${st.lat},${st.lon}`;
-    if (!wxCache.has(k)) wxCache.set(k, await fetchStadiumWeather(st.lat, st.lon).catch(e => { log(`forecast failed ${st.name}: ${e.message}`); return null; }));
+    if (!wxCache.has(k)) {
+      const wx = await fetchStadiumWeather(st.lat, st.lon).catch(e => { log(`forecast failed ${st.name}: ${e.message}`); return null; });
+      if (wx) addBest(wx, skill, stadiumKey(st), now);
+      wxCache.set(k, wx);
+    }
     return wxCache.get(k);
   };
 

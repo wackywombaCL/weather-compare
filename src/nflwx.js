@@ -5,7 +5,7 @@ import { getJSON, isNum } from "./sources.js";
 
 export const H = 3600e3;
 export const NFL_MODELS = ["best_match", "ecmwf_ifs025", "gfs_seamless", "icon_seamless", "gem_seamless"];
-export const MODEL_NAMES = { best_match: "Open-Meteo blend", ecmwf_ifs025: "Euro", gfs_seamless: "GFS", icon_seamless: "ICON", gem_seamless: "GEM" };
+export const MODEL_NAMES = { best: "Best blend", best_match: "Open-Meteo blend", ecmwf_ifs025: "Euro", gfs_seamless: "GFS", icon_seamless: "ICON", gem_seamless: "GEM" };
 // Thresholds. "sig" = significant impact (red; triggers phone alerts), "note" = worth knowing (yellow).
 export const LIMITS = {
   rain:  { note: 0.05, sig: 0.30, rateSig: 0.15 },   // inches over the 5 hours / in any one hour
@@ -44,7 +44,8 @@ export async function fetchStadiumWeather(lat, lon) {
 export const gameSlots = kick => { const h0 = Math.floor(kick / H) * H - H; return [0, 1, 2, 3, 4].map(i => h0 + i * H); };
 export function gameWeather(wx, kick) {
   const slots = gameSlots(kick);
-  const main = new Map(wx.models.best_match || Object.values(wx.models)[0] || []);
+  // Main line: the stadium's best blend (from daily tracking) when there is one.
+  const main = new Map(wx.models.best || wx.models.best_match || Object.values(wx.models)[0] || []);
   const win = slots.map(t => main.get(t));
   const before = Array.from({ length: 48 }, (_, i) => main.get(slots[0] - (i + 1) * H));
   const byModel = Object.fromEntries(Object.entries(wx.models).map(([m, rows]) => { const mp = new Map(rows); return [m, slots.map(t => mp.get(t))]; }));
@@ -109,7 +110,7 @@ export function flagsFor(win, before, stadium = {}) {
 
 // ---------- How closely the models agree ----------
 export function modelAgreement(byModel) {
-  const per = Object.entries(byModel).map(([m, hs]) => {
+  const per = Object.entries(byModel).filter(([m]) => m !== "best").map(([m, hs]) => {
     const v = hs.filter(Boolean);
     if (!v.length) return null;
     const nums = k => v.map(h => h[k]).filter(isNum);
