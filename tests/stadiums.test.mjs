@@ -104,6 +104,28 @@ await check("daily forecast file covers every stadium with the blend", () => {
   assert.ok(s.blend && s.days.length >= 5);
   assert.ok(Math.abs(s.days[1].hi - 50) <= 1, "hi " + s.days[1].hi);
 });
+await check("whole day (24 hours) is locked and scored separately: high, low, rain total", () => {
+  const d = scores.days.at(-1);
+  assert.ok(d.day, "full-day score");
+  const s = d.day.leads["1"];
+  assert.equal(s.ecmwf_ifs025.hiErr, 0); assert.equal(s.gfs_seamless.hiErr, 4); assert.equal(s.icon_seamless.loErr, -2);
+  assert.equal(s.ecmwf_ifs025.qpfErr, 0); assert.equal(s.gfs_seamless.rain, "miss");
+  assert.equal(d.day.obs.precip, 1.2);
+  const W = weightsFor(skill, "lincoln-financial-field", 1);
+  assert.ok(W.dayRain && !W.dayRain.gfs_seamless && W.dayRainLead !== "gfs_seamless", JSON.stringify(W.dayRain));
+  assert.ok(skill.recent.all["1"].ecmwf_ifs025.day.n >= 2);
+});
+await check("rain in the 48 h before kickoff (wet field) uses the full-day rain blend", () => {
+  const wx = { tz: "America/New_York", models: {} };
+  const t0 = Math.floor(NOW / H) * H;
+  // Only GFS (no skill at rain) shows a downpour beforehand.
+  for (const m of Object.keys(OFF)) wx.models[m] = Array.from({ length: 96 }, (_, i) => [t0 + i * H, { temp: 50, wind: 5, gust: 8, wdir: 0, qpf: m === "gfs_seamless" ? 0.5 : 0, pop: 10, snow: 0, code: 2 }]);
+  addBest(wx, skill, "lincoln-financial-field", NOW);
+  assert.ok(wx.bestRain?.length);
+  const gw = gameWeather(wx, t0 + 72 * H);
+  const pre = gw.before.reduce((s, h) => s + (h?.qpf || 0), 0);
+  assert.ok(pre < 0.2, "48 h rain " + pre);
+});
 await check("finished lock files are cleaned up", async () => {
   const left = await readdir(path.join(dataDir, "stadiums", "locks"));
   assert.ok(left.length <= 5, left.join(","));

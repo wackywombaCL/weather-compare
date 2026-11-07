@@ -1,11 +1,14 @@
 // Daily forecast tracking for every outdoor US NFL stadium (the Stadiums tab). Runs hourly
 // (stadiums.yml); each step only does work when it's due.
 //
-// LOCK (once a day, after 6am local at each stadium): every model's hourly forecast for
-//   9am–midnight local, today and 1, 2 and 3 days ahead, plus the current "best blend".
+// LOCK (once a day, after 6am local at each stadium): every model's hourly forecast for the
+//   whole local day (all 24 hours), today and 1, 2 and 3 days ahead, plus the current "best blend".
 //                                                     → data/stadiums/locks/<date>.json
 // VERIFY (after 2am local the next day): hourly observations from the nearest official
-//   station (NWS), every locked forecast scored the same way as NFL games.
+//   station (NWS). Two scores per forecast:
+//   - game hours (9am–midnight), scored the same way as NFL games → sets the best blend;
+//   - full day: high, low, rain total and rain call → sets the blend used for rain in the
+//     48 hours before kickoff (wet-field flag).
 //                                                     → data/stadiums/scores.json (rolling)
 // SKILL: per stadium, lead and element (temperature, wind, rain), which models have been best
 //   over the last 14 days → weights for the best blend, plus tables for the tab.
@@ -17,16 +20,29 @@ import path from "node:path";
 import { setRequestInit, isNum, dayKey, localHour, localHourStart } from "../src/sources.js";
 import { TRACKED, stadiumKey } from "../src/stadiums.js";
 import { fetchStadiumWeather, NFL_MODELS } from "../src/nflwx.js";
-import { LEAD_DAYS, RECENT_DAYS, BEST, weightsFrom, addBest } from "../src/stadiumskill.js";
+import { LEAD_DAYS, RECENT_DAYS, BEST, weightsFrom, dayWeightsFrom, addBest } from "../src/stadiumskill.js";
 import { observe, scoreModel, pack } from "./nfl-verify.mjs";
 
 const H = 3600e3;
-export const WINDOW = Array.from({ length: 15 }, (_, i) => 9 + i);   // local hours 9am … 11pm (the hour ending at midnight)
+export const DAY_HOURS = Array.from({ length: 24 }, (_, i) => i);   // local midnight … 11pm
+export const GAME_FROM = 9;                                         // game hours: 9am … 11pm (the hour ending at midnight)
 const LOCK_HOUR = 6, VERIFY_HOUR = 2, KEEP_DAYS = 45, GIVE_UP_DAYS = 4, FORECAST_EVERY = 2.5 * H, FORECAST_DAYS = 6;
 const r1 = v => isNum(v) ? Math.round(v * 10) / 10 : null, r2 = v => isNum(v) ? Math.round(v * 100) / 100 : null;
 const addDays = (k, n) => new Date(Date.parse(k + "T12:00:00Z") + n * 864e5).toISOString().slice(0, 10);
 const avg = a => { const v = a.filter(isNum); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : null; };
 const right = r => r === "hit" || r === "none";
+
+// The game hours (from index g0) of a packed 24-hour forecast.
+const sliceP = (p, g0) => Object.fromEntries(Object.entries(p).map(([k, a]) => [k, a.slice(g0)]));
+// Full-day score: high, low, rain total and whether it rained at all.
+export function scoreDay(p, ob) {
+  const fT = p.temp.filter(isNum), oT = ob.temp.filter(isNum);
+  if (fT.length < 16 || oT.length < 16) return null;
+  const qpf = p.qpf.reduce((s, q) => s + (isNum(q) ? q : 0), 0);
+  const wet = p.qpf.some(q => isNum(q) && q >= 0.01) || p.snow.some(x => isNum(x) && x >= 0.1);
+  return { hiErr: r1(Math.max(...fT) - Math.max(...oT)), loErr: r1(Math.min(...fT) - Math.min(...oT)), qpf: r2(qpf),
+    qpfErr: isNum(ob.precip) ? r2(qpf - ob.precip) : null, rain: wet && ob.rained ? "hit" : wet ? "false" : ob.rained ? "miss" : "none" };
+}
 
 async function readJSON(f, d) { try { return JSON.parse(await readFile(f, "utf8")); } catch { return d; } }
 async function writeJSON(f, data) { await mkdir(path.dirname(f), { recursive: true }); await writeFile(f, JSON.stringify(data) + "\n"); }
@@ -34,6 +50,8 @@ async function writeJSON(f, data) { await mkdir(path.dirname(f), { recursive: tr
 // ---------- Skill tables (weights + leaderboards for the tab) ----------
 const sumStat = rs => ({ n: rs.length, score: r1(avg(rs.map(s => s.score))), temp: r1(avg(rs.map(s => s.tempMae))), wind: r1(avg(rs.map(s => s.windMae))),
   rain: rs.length ? Math.round(100 * rs.filter(s => right(s.rain)).length / rs.length) : null, bias: r1(avg(rs.map(s => s.tempBias))) });
+const daySum = rs => ({ n: rs.length, hi: r1(avg(rs.map(s => isNum(s.hiErr) ? Math.abs(s.hiErr) : null))), lo: r1(avg(rs.map(s => isNum(s.loErr) ? Math.abs(s.loErr) : null))),
+  qpf: r2(avg(rs.map(s => isNum(s.qpfErr) ? Math.abs(s.qpfErr) : null))), rain: Math.round(100 * rs.filter(s => right(s.rain)).length / rs.length) });
 export function buildSkill(scores, now) {
   const days = scores.days || [];
   const cutoff = d => d >= addDays(dayKey(now, "UTC"), -RECENT_DAYS - 1);
@@ -42,12 +60,17 @@ export function buildSkill(scores, now) {
   const recent = { st: {}, all: {} };
   for (const L of LEAD_DAYS.map(String)) {
     const rows = days.filter(d => cutoff(d.date));
-    weights.all[L] = weightsFrom(rows, L, { bias: false });
+    weights.all[L] = { ...weightsFrom(rows, L, { bias: false }), ...dayWeightsFrom(rows, L) };
     for (const k of keys) {
       const own = rows.filter(d => d.st === k);
-      if (own.length) (weights.st[k] ||= {})[L] = weightsFrom(own, L);
+      if (own.length) (weights.st[k] ||= {})[L] = { ...weightsFrom(own, L), ...dayWeightsFrom(own, L) };
     }
-    const table = rs => Object.fromEntries([...NFL_MODELS, BEST].map(m => [m, sumStat(rs.map(d => d.leads?.[L]?.[m]).filter(Boolean))]).filter(([, s]) => s.n));
+    const table = rs => Object.fromEntries([...NFL_MODELS, BEST].map(m => {
+      const s = sumStat(rs.map(d => d.leads?.[L]?.[m]).filter(Boolean));
+      const ds = rs.map(d => d.day?.leads?.[L]?.[m]).filter(Boolean);
+      if (ds.length) s.day = daySum(ds);
+      return [m, s];
+    }).filter(([, s]) => s.n || s.day));
     recent.all[L] = table(rows);
     for (const k of keys) { const t = table(rows.filter(d => d.st === k)); if (Object.keys(t).length) (recent.st[k] ||= {})[L] = t; }
   }
@@ -61,6 +84,15 @@ export function buildSkill(scores, now) {
   }
   for (const byM of Object.values(allTime.all)) for (const [m, a] of Object.entries(byM))
     byM[m] = { n: a.n, score: r1(a.score / a.n), temp: r1(a.temp / a.n), wind: a.nw ? r1(a.wind / a.nw) : null, rain: Math.round(100 * a.right / a.n), bias: r1(a.bias / a.n) };
+  for (const [k, byL] of Object.entries(scores.dayTotals || {})) for (const [L, byM] of Object.entries(byL)) for (const [m, t] of Object.entries(byM)) {
+    const day = { n: t.n, hi: r1(t.hi / t.n), lo: r1(t.lo / t.n), qpf: t.nq ? r2(t.qpf / t.nq) : null, rain: Math.round(100 * t.right / t.n) };
+    (((allTime.st[k] ||= {})[L] ||= {})[m] ||= { n: 0 }).day = day;
+    const a = (((allTime.dayAll ||= {})[L] ||= {})[m] ||= { n: 0, hi: 0, lo: 0, qpf: 0, nq: 0, right: 0 });
+    a.n += t.n; a.hi += t.hi; a.lo += t.lo; a.qpf += t.qpf; a.nq += t.nq; a.right += t.right;
+  }
+  for (const [L, byM] of Object.entries(allTime.dayAll || {})) for (const [m, a] of Object.entries(byM))
+    ((allTime.all[L] ||= {})[m] ||= { n: 0 }).day = { n: a.n, hi: r1(a.hi / a.n), lo: r1(a.lo / a.n), qpf: a.nq ? r2(a.qpf / a.nq) : null, rain: Math.round(100 * a.right / a.n) };
+  delete allTime.dayAll;
   // Latest checked day per stadium (for "yesterday at each stadium").
   const latest = {};
   for (const d of days) if (!latest[d.st] || d.date > latest[d.st].date) latest[d.st] = { date: d.date, station: d.station, mi: d.mi, obs: d.obs, lead1: Object.fromEntries(Object.entries(d.leads?.["1"] || {}).map(([m, s]) => [m, s.score])) };
@@ -114,7 +146,7 @@ export async function run({ dataDir, now = Date.now(), log = console.log, stadiu
     if (state.locked[key] !== today && localHour(now, wx.tz) >= LOCK_HOUR) {
       for (const d of LEAD_DAYS) {
         const date = addDays(today, d);
-        const slots = WINDOW.map(h => localHourStart(date, h, wx.tz));
+        const slots = DAY_HOURS.map(h => localHourStart(date, h, wx.tz));
         if (!locks.has(date)) locks.set(date, await readJSON(lockFile(date), { date, st: {} }));
         const rec = locks.get(date);
         const s = (rec.st[key] ||= { tz: wx.tz, slots, leads: {} });
@@ -122,7 +154,7 @@ export async function run({ dataDir, now = Date.now(), log = console.log, stadiu
         const models = {};
         for (const [m, rows] of Object.entries(wx.models)) {
           const mp = new Map(rows), hs = slots.map(t => mp.get(t));
-          if (hs.filter(Boolean).length >= 10) models[m] = pack(hs);
+          if (hs.filter(Boolean).length >= 16) models[m] = pack(hs);
         }
         s.leads[d] = { at: now, models };
       }
@@ -149,12 +181,18 @@ export async function run({ dataDir, now = Date.now(), log = console.log, stadiu
       if (now < localHourStart(next, VERIFY_HOUR, s.tz)) continue;
       const st = stadiums.find(x => stadiumKey(x) === key) || TRACKED.find(x => stadiumKey(x) === key);
       if (!st || now > localHourStart(addDays(rec.date, GIVE_UP_DAYS), 0, s.tz)) { s.done = "gave up"; dirty = true; log(`gave up on ${key} ${rec.date}`); continue; }
-      const ob = await observe(st, s.slots, 10).catch(e => { log(`observations failed ${key}: ${e.message}`); return null; });
+      // Older locks held only the game hours (15); new ones hold the whole day (24).
+      const full = s.slots.length === 24, g0 = full ? GAME_FROM : 0;
+      const fail = e => { log(`observations failed ${key}: ${e.message}`); return null; };
+      const ob = await observe(st, s.slots.slice(g0), 10).catch(fail);
       if (!ob) { log(`no observations yet for ${key} ${rec.date}`); continue; }
-      const leads = {};
+      const obDay = full ? await observe(st, s.slots, 16).catch(fail) : null;
+      const leads = {}, dayLeads = {};
       for (const [L, lk] of Object.entries(s.leads)) {
-        const out = {};
-        for (const [m, p] of Object.entries(lk.models)) {
+        const out = {}, dout = {};
+        for (const [m, full24] of Object.entries(lk.models)) {
+          const p = g0 ? sliceP(full24, g0) : full24;
+          if (obDay) { const ds = scoreDay(full24, obDay); if (ds) dout[m] = ds; }
           const sc = scoreModel(p, ob);
           if (!sc) continue;
           out[m] = { score: sc.score, tempMae: sc.tempMae, windMae: sc.windMae, rain: sc.rain, tempBias: sc.tempBias, windBias: sc.windBias };
@@ -163,12 +201,18 @@ export async function run({ dataDir, now = Date.now(), log = console.log, stadiu
           if (isNum(sc.windMae)) { t.wind += sc.windMae; t.nw++; }
         }
         leads[L] = out;
+        if (Object.keys(dout).length) dayLeads[L] = dout;
+        for (const [m, ds] of Object.entries(dout)) {
+          const t = (((scores.dayTotals ||= {})[key] ||= {})[L] ||= {})[m] ||= { n: 0, hi: 0, lo: 0, qpf: 0, nq: 0, right: 0 };
+          t.n++; t.hi += Math.abs(ds.hiErr); t.lo += Math.abs(ds.loErr); t.right += +right(ds.rain);
+          if (isNum(ds.qpfErr)) { t.qpf += Math.abs(ds.qpfErr); t.nq++; }
+        }
       }
-      const T = ob.temp.filter(isNum), Wd = ob.wind.filter(isNum);
+      const T = (obDay || ob).temp.filter(isNum), Wd = ob.wind.filter(isNum);
       scores.days = scores.days.filter(d => !(d.st === key && d.date === rec.date));
       scores.days.push({ date: rec.date, st: key, station: ob.station, mi: ob.mi,
         obs: { hi: T.length ? r1(Math.max(...T)) : null, lo: T.length ? r1(Math.min(...T)) : null, wind: Wd.length ? r1(Math.max(...Wd)) : null, gust: ob.gustMax, rained: ob.rained, precip: ob.precip },
-        leads });
+        leads, ...(obDay ? { day: { obs: { hi: r1(Math.max(...obDay.temp.filter(isNum))), lo: r1(Math.min(...obDay.temp.filter(isNum))), precip: obDay.precip, rained: obDay.rained }, leads: dayLeads } } : {}) });
       s.done = "verified"; dirty = true; verified++;
       log(`verified ${key} ${rec.date} at ${ob.station}`);
     }

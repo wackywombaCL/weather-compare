@@ -92,6 +92,15 @@ function render(el, skill, fc, sched) {
     </tbody></table></div>`
     : `<div class="panel"><p class="sub2" style="margin:0">No checked days yet. Forecasts are locked every morning and checked after 2am the next night, so the first results show up tomorrow. The best blend starts using each stadium's own record after 3 checked days (before that it uses all stadiums together), and corrects temperature bias after 5.</p></div>`;
 
+  // ---- Full day (all 24 hours) ----
+  const dayRanked = Object.entries(board).filter(([m, x]) => SHORT[m] && x.day?.n).sort((a, b) => (a[1].day.qpf ?? 9) - (b[1].day.qpf ?? 9) || b[1].day.rain - a[1].day.rain || (a[1].day.hi + a[1].day.lo) - (b[1].day.hi + b[1].day.lo));
+  const Wall = skill?.weights?.all?.[lead];
+  const dayHTML = dayRanked.length ? `<h3 style="font-size:14px;margin:14px 0 6px">Full day: high, low and rain total</h3>
+    <div class="panel scroll"><table class="acc stack"><thead><tr><th style="text-align:left">Model</th><th>Days</th><th>High miss</th><th>Low miss</th><th>Rain total miss</th><th>Rain call right</th></tr></thead><tbody>
+      ${dayRanked.map(([m, x], i) => `<tr class="${i === 0 ? "rank1" : ""}${m === "best" ? " avgrow" : ""}"><th>${esc(SHORT[m])}</th><td data-label="Days">${x.day.n}</td><td data-label="High miss">${deg(x.day.hi)}</td><td data-label="Low miss">${deg(x.day.lo)}</td><td data-label="Rain total miss">${isNum(x.day.qpf) ? R(x.day.qpf) : "—"}</td><td data-label="Rain call right">${pct(x.day.rain)}</td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="sub2" style="margin:6px 0 0">All 24 hours, midnight to midnight. Sorted by rain total: ${Wall?.dayRainLead ? `<b>${esc(SHORT[Wall.dayRainLead])}</b> currently leads, so` : "the leaders"} drive the rain-before-kickoff (wet field) forecast on the NFL tab.</p>` : "";
+
   // ---- Per stadium ----
   const models = Object.keys(SHORT).filter(m => Object.values(src?.st || {}).some(byL => byL[lead]?.[m]));
   const stRows = TRACKED.map(st => ({ st, k: stadiumKey(st), t: src?.st?.[stadiumKey(st)]?.[lead] })).filter(x => x.t);
@@ -115,9 +124,12 @@ function render(el, skill, fc, sched) {
     </div>
     <h3 style="font-size:14px;margin:6px 0">All stadiums together</h3>
     ${boardHTML}
+    ${dayHTML}
     ${stHTML ? `<h3 style="font-size:14px;margin:14px 0 6px">By stadium</h3>${stHTML}` : ""}
     <details class="how"><summary>How this works</summary><ul>
-      <li><b>Every day</b>, after 6am local time at each stadium, every model's hourly forecast for 9am–midnight is locked in for today and 1, 2 and 3 days ahead. After 2am the next night it's checked against the nearest official weather station (NWS): temperature and wind each hour, and whether it rained. Score 0–100: 45% temperature, 35% wind, 20% rain call (the same as the NFL game scores).</li>
+      <li><b>Every day</b>, after 6am local time at each stadium, every model's hourly forecast for the whole day is locked in for today and 1, 2 and 3 days ahead. After 2am the next night it's checked against the nearest official weather station (NWS).</li>
+      <li><b>Game hours (9am–midnight)</b> are scored like the NFL games: temperature and wind each hour, and whether it rained. Score 0–100: 45% temperature, 35% wind, 20% rain call. This sets the best blend for game-time weather. Overnight hours are left out so a model that's good at overnight lows doesn't get extra say at kickoff.</li>
+      <li><b>Full day (all 24 hours)</b> is scored separately: high, low, rain total and rain call. The models best at rain totals drive the forecast of rain in the 48 hours before kickoff (the wet-field flag), since overnight rain soaks a field too.</li>
       <li><b>Best blend:</b> for each stadium and each range, temperature, wind and rain are each built from the models that have been most accurate at that stadium over the last 14 checked days. The leader counts most; the others fade out the further behind they are, and models far behind get no say. Temperatures are also corrected for each model's recent warm or cold bias at that stadium (after 5 checked days, up to ±5°).</li>
       <li><b>Until a stadium has 3 checked days</b>, the blend uses how the models did across all stadiums; before any results, it's a plain average.</li>
       <li><b>The NFL tab</b> uses this blend for each game's forecast and flags, and the NFL accuracy table scores it as its own row ("Best blend").</li>

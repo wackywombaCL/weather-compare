@@ -53,13 +53,33 @@ export function weightsFrom(rows, lead, { bias = true } = {}) {
   return out;
 }
 
+// Full-day rain weights (rain totals and rain/no-rain calls over all 24 hours): used for the
+// blend of rain in the 48 hours before kickoff (wet field). Returns { nDay, dayRain: {m: w} }.
+export function dayWeightsFrom(rows, lead) {
+  const per = {};
+  for (const r of rows) for (const [m, s] of Object.entries(r.day?.leads?.[lead] || {})) if (m !== BEST && s) (per[m] ||= []).push(s);
+  const nDay = Math.max(0, ...Object.values(per).map(a => a.length));
+  if (!nDay) return { nDay };
+  // Miss in inches, with a wrong rain/no-rain call counting as an extra 0.05".
+  const vals = Object.keys(per).filter(m => per[m].length >= Math.min(MIN_DAYS, nDay))
+    .map(m => [m, avg(per[m].map(s => (isNum(s.qpfErr) ? Math.abs(s.qpfErr) : 0) + (right(s.rain) ? 0 : 0.05)))]).filter(([, v]) => isNum(v)).sort((a, b) => a[1] - b[1]);
+  if (!vals.length) return { nDay };
+  const raw = vals.map(([m, v]) => [m, Math.exp(-(v - vals[0][1]) / 0.08)]).filter(([, w]) => w >= 0.05);
+  const tot = raw.reduce((s, [, w]) => s + w, 0);
+  return { nDay, dayRain: Object.fromEntries(raw.map(([m, w]) => [m, r3(w / tot)])), dayRainLead: vals[0][0] };
+}
+
 // Weights for one stadium at one lead (days ahead). Falls back to all stadiums pooled together
 // (no bias correction) until the stadium has a few checked days of its own.
 export function weightsFor(skill, key, lead) {
   const L = String(Math.max(0, Math.min(3, lead)));
   const own = skill?.weights?.st?.[key]?.[L];
-  if (own?.n >= MIN_DAYS) return { ...own, from: "stadium" };
   const all = skill?.weights?.all?.[L];
+  if (own?.n >= MIN_DAYS) {
+    // Full-day rain record can lag behind (older locks held only the game hours).
+    const day = own.nDay >= MIN_DAYS ? {} : all?.nDay >= MIN_DAYS ? { dayRain: all.dayRain, dayRainLead: all.dayRainLead } : { dayRain: null };
+    return { ...own, ...day, from: "stadium" };
+  }
   if (all?.n >= MIN_DAYS) return { ...all, bias: {}, from: "all" };
   return null;
 }
@@ -109,5 +129,14 @@ export function addBest(wx, skill, key, now = Date.now()) {
     const W = Wfor(daysAhead(t)) || Wfor(1) || Wfor(0);
     return [t, blendHour(Object.fromEntries(maps.map(([m, mp]) => [m, mp.get(t)])), W)];
   }).filter(([, h]) => h);
+  // Rain blended by full-day rain skill, for the 48 hours before kickoff (kept out of wx.models
+  // so it isn't shown, locked or scored as a model of its own).
+  wx.bestRain = times.map(t => {
+    const W = Wfor(daysAhead(t)) || Wfor(1) || Wfor(0);
+    if (!W.dayRain) return null;
+    const hs = maps.map(([m, mp]) => [m, mp.get(t)]).filter(([, h]) => h);
+    return [t, { qpf: wavg(hs, W.dayRain, "qpf"), snow: wavg(hs, W.dayRain, "snow") }];
+  }).filter(Boolean);
+  if (!wx.bestRain.length) delete wx.bestRain;
   return Wfor(1) || Wfor(0);
 }

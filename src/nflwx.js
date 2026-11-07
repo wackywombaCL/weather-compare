@@ -47,7 +47,9 @@ export function gameWeather(wx, kick) {
   // Main line: the stadium's best blend (from daily tracking) when there is one.
   const main = new Map(wx.models.best || wx.models.best_match || Object.values(wx.models)[0] || []);
   const win = slots.map(t => main.get(t));
-  const before = Array.from({ length: 48 }, (_, i) => main.get(slots[0] - (i + 1) * H));
+  // Rain in the 48 h before kickoff: the full-day rain blend when there is one (see stadiumskill.js).
+  const pre = wx.bestRain ? new Map(wx.bestRain) : main;
+  const before = Array.from({ length: 48 }, (_, i) => pre.get(slots[0] - (i + 1) * H));
   const byModel = Object.fromEntries(Object.entries(wx.models).map(([m, rows]) => { const mp = new Map(rows); return [m, slots.map(t => mp.get(t))]; }));
   return { slots, win, before, byModel };
 }
