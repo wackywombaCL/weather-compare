@@ -153,8 +153,9 @@ export async function run({ dataDir, now = Date.now(), log = console.log, stadiu
         if (s.leads[d]) continue;
         const models = {};
         for (const [m, rows] of Object.entries(wx.models)) {
-          const mp = new Map(rows), hs = slots.map(t => mp.get(t));
-          if (hs.filter(Boolean).length >= 16) models[m] = pack(hs);
+          // Use the day's existing hours so every lead of a day lines up (older days: game hours only).
+          const mp = new Map(rows), hs = s.slots.map(t => mp.get(t));
+          if (hs.filter(Boolean).length >= Math.min(16, s.slots.length - 5)) models[m] = pack(hs);
         }
         s.leads[d] = { at: now, models };
       }
