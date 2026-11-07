@@ -423,3 +423,4 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .stgrid td.gameday { background: color-mix(in srgb, var(--good) 12%, var(--surface)); }
 .stgrid .gd { font-size: 10px; font-weight: 700; white-space: nowrap; }
 @media (max-width: 520px) { .tab { padding: 8px 9px; font-size: 14px; } }
+.stgrid .team, .nflgrid .team { font-size: 11px; font-weight: 600; color: var(--text-2); line-height: 1.3; white-space: normal; }

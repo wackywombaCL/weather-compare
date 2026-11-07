@@ -79,7 +79,7 @@ function render(el, skill, fc, sched) {
   };
   const forecastHTML = rows.length ? `
     <div class="panel scroll tablebox"><table class="stgrid"><thead><tr><th style="text-align:left">Stadium</th>${dates.map(d => `<th>${esc(dayLbl(d))}</th>`).join("")}</tr></thead><tbody>
-      ${rows.map(x => { const W = weightsFor(skill, x.k, 1); return `<tr><th><b>${esc(short(x.st.name))}</b><div class="sub2">${W ? `Blend: ${esc(blendNote(W))}` : "Equal blend (building history)"}</div></th>${dates.map(d => cell(x, d)).join("")}</tr>`; }).join("")}
+      ${rows.map(x => { const W = weightsFor(skill, x.k, 1); return `<tr><th><b>${esc(short(x.st.name))}</b>${x.st.team ? `<div class="team">${esc(x.st.team)}</div>` : ""}<div class="sub2">${W ? `Blend: ${esc(blendNote(W))}` : "Equal blend (building history)"}</div></th>${dates.map(d => cell(x, d)).join("")}</tr>`; }).join("")}
     </tbody></table></div>
     <p class="sub2" style="margin:6px 0 0">High and low for the whole day; wind, gusts and rain chance are the 9am–midnight local peak; rain is the day's total. Highlighted: wind 15+ mph or gusts 25+, 0.05"+ of rain, any snow, lows at freezing or below. 🏈 = game day. Updated ${fc?.updated ? esc(new Date(fc.updated).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })) : "—"}.</p>`
     : `<div class="panel"><p class="sub2" style="margin:0">The first stadium forecasts are being made now; check back in an hour.</p></div>`;
@@ -99,7 +99,7 @@ function render(el, skill, fc, sched) {
     <div class="panel scroll"><table class="acc stack"><thead><tr><th style="text-align:left">Model</th><th>Days</th><th>High miss</th><th>Low miss</th><th>Rain total miss</th><th>Rain call right</th></tr></thead><tbody>
       ${dayRanked.map(([m, x], i) => `<tr class="${i === 0 ? "rank1" : ""}${m === "best" ? " avgrow" : ""}"><th>${esc(SHORT[m])}</th><td data-label="Days">${x.day.n}</td><td data-label="High miss">${deg(x.day.hi)}</td><td data-label="Low miss">${deg(x.day.lo)}</td><td data-label="Rain total miss">${isNum(x.day.qpf) ? R(x.day.qpf) : "—"}</td><td data-label="Rain call right">${pct(x.day.rain)}</td></tr>`).join("")}
     </tbody></table></div>
-    <p class="sub2" style="margin:6px 0 0">All 24 hours, midnight to midnight. Sorted by rain total: ${Wall?.dayRainLead ? `<b>${esc(SHORT[Wall.dayRainLead])}</b> currently leads, so` : "the leaders"} drive the rain-before-kickoff (wet field) forecast on the NFL tab.</p>` : "";
+    <p class="sub2" style="margin:6px 0 0">All 24 hours, midnight to midnight. Sorted by rain total. The models best at rain totals${Wall?.dayRainLead ? ` (currently led by <b>${esc(SHORT[Wall.dayRainLead])}</b>)` : ""} drive the rain-before-kickoff (wet field) forecast on the NFL tab.</p>` : "";
 
   // ---- Per stadium ----
   const models = Object.keys(SHORT).filter(m => Object.values(src?.st || {}).some(byL => byL[lead]?.[m]));
@@ -109,7 +109,7 @@ function render(el, skill, fc, sched) {
         const cells = models.filter(m => m !== "best").map(m => x.t[m]?.score).filter(isNum), top = Math.max(...cells);
         const W = weightsFor(skill, x.k, lead), n = Math.max(...Object.values(x.t).map(s => s.n));
         const lat = skill?.latest?.[x.k];
-        return `<tr><th title="${esc(x.st.name)}">${esc(short(x.st.name))}${lat ? `<div class="sub2" title="Latest checked day at ${esc(lat.station)}">${esc(lat.station)}: ${T(lat.obs?.hi)}/${T(lat.obs?.lo)}${lat.obs?.rained ? " 🌧" : ""}</div>` : ""}</th><td>${n}</td>${models.map(m => `<td class="${x.t[m]?.score === top && m !== "best" ? "best" : ""}">${badge(x.t[m]?.score)}</td>`).join("")}<td class="l sub2">${W?.from === "stadium" ? esc(blendNote(W)) : "—"}</td></tr>`;
+        return `<tr><th title="${esc(x.st.name)}">${esc(short(x.st.name))}${x.st.team ? `<div class="team">${esc(x.st.team)}</div>` : ""}${lat ? `<div class="sub2" title="Latest checked day at ${esc(lat.station)}">${esc(lat.station)}: ${T(lat.obs?.hi)}/${T(lat.obs?.lo)}${lat.obs?.rained ? " 🌧" : ""}</div>` : ""}</th><td>${n}</td>${models.map(m => `<td class="${x.t[m]?.score === top && m !== "best" ? "best" : ""}">${badge(x.t[m]?.score)}</td>`).join("")}<td class="l sub2">${W?.from === "stadium" ? esc(blendNote(W)) : "—"}</td></tr>`;
       }).join("")}
     </tbody></table></div>` : "";
 
