@@ -55,12 +55,17 @@ def text(x, y, expr, size, sample, color=WHITE, bold=False, align="LEFT", width=
     m = base("TextModule", x, y, title)
     m.update(text_expression=f"[b]{expr}[/b]" if bold else expr, text_size=float(size), paint_color=color)
     if width:
-        # KWGT counts the left padding inside a fixed-width text box, so the box must be
-        # padding + width wide (otherwise anything placed far from the left edge shows "...").
-        m.update(text_size_type="FIXED_WIDTH", text_width=float(x + width), text_lines=1.0)
+        m.update(text_size_type="FIXED_WIDTH", text_width=float(width), text_lines=1.0)
     if align != "LEFT":
         m["text_align"] = align
     m["_s"] = {"text": sample, "bold": bold, "align": align, "width": width}
+    if width:
+        # On a device, padding on a fixed-width text eats into its width (far-right items showed
+        # "..."), so fixed-width texts sit at 0,0 inside a positioned layer instead.
+        m["position_padding_left"] = m["position_padding_top"] = 0.0
+        wrap = base("OverlapLayerModule", x, y, title + " position")
+        wrap["viewgroup_items"] = [m]
+        return wrap
     return m
 
 
@@ -119,7 +124,14 @@ def esc(s):
 
 def svg(preset):
     out = []
+    flat = []
     for m in preset["preset_root"]["viewgroup_items"][0]["viewgroup_items"]:
+        if m["internal_type"] == "OverlapLayerModule":
+            for c in m["viewgroup_items"]:
+                flat.append(dict(c, position_padding_left=m["position_padding_left"] + c["position_padding_left"], position_padding_top=m["position_padding_top"] + c["position_padding_top"]))
+        else:
+            flat.append(m)
+    for m in flat:
         x, y = m["position_padding_left"], m["position_padding_top"]
         if m["internal_type"] == "ShapeModule":
             out.append(f'<rect x="{x}" y="{y}" width="{m["shape_width"]}" height="{m["shape_height"]}" rx="{m["shape_corners"]}" fill="#{m["paint_color"][3:]}" fill-opacity="{int(m["paint_color"][1:3], 16) / 255:.2f}"/>')
