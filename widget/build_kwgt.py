@@ -55,7 +55,9 @@ def text(x, y, expr, size, sample, color=WHITE, bold=False, align="LEFT", width=
     m = base("TextModule", x, y, title)
     m.update(text_expression=f"[b]{expr}[/b]" if bold else expr, text_size=float(size), paint_color=color)
     if width:
-        m.update(text_size_type="FIXED_WIDTH", text_width=float(width), text_lines=1.0)
+        # KWGT counts the left padding inside a fixed-width text box, so the box must be
+        # padding + width wide (otherwise anything placed far from the left edge shows "...").
+        m.update(text_size_type="FIXED_WIDTH", text_width=float(x + width), text_lines=1.0)
     if align != "LEFT":
         m["text_align"] = align
     m["_s"] = {"text": sample, "bold": bold, "align": align, "width": width}
