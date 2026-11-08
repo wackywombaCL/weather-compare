@@ -30,6 +30,9 @@ setKeyProvider(id => getKeys()[id]);
   const m = location.hash.match(/(?:^#|&)code=([^&]+)/);
   if (m) { store.set("wc.code", decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname + location.search); }
 }
+// Ask the browser to keep this site's saved settings (access code, keys) instead of clearing them
+// when it tidies up storage. Granted automatically for home-screen apps on Android Chrome.
+try { navigator.storage?.persist?.().catch(() => {}); } catch {}
 const applyProxy = () => setProxy({ url: store.get("wc.proxyUrl", "") || PROXY_URL, code: store.get("wc.code", "") });
 applyProxy();
 
