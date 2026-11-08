@@ -1,0 +1,41 @@
+name: Phone widget feed
+
+# Every 30 minutes: the Best forecast for Vallejo and Napa → data/widget.json, read by the KWGT
+# home-screen widget (widget/*.kwgt). Same math as the Best forecast card in the app.
+on:
+  schedule:
+    - cron: "13,43 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: widget
+  cancel-in-progress: true
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/widget.mjs
+        env:
+          PIRATE_KEY: ${{ secrets.PIRATE_KEY }}
+          TOMORROW_KEY: ${{ secrets.TOMORROW_KEY }}
+          WEATHERAPI_KEY: ${{ secrets.WEATHERAPI_KEY }}
+          VISUALCROSSING_KEY: ${{ secrets.VISUALCROSSING_KEY }}
+          OWM_KEY: ${{ secrets.OWM_KEY }}
+      - name: Save
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/widget.json
+          if git diff --cached --quiet; then echo "No change."; exit 0; fi
+          git commit -q -m "Widget feed $(date -u +%H:%MZ)"
+          for i in 1 2 3 4; do git pull --rebase -q origin main && git push -q && exit 0; sleep $((i * 3)); done
+          exit 1
