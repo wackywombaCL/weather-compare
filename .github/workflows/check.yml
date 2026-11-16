@@ -3,6 +3,15 @@ name: Check sources
 # Manual health check: fetches every source once for Vallejo and prints what came back.
 on:
   workflow_dispatch:
+    inputs:
+      stations:
+        description: "Station IDs to report on (comma separated); blank for the usual list"
+        type: string
+        default: ""
+      notify:
+        description: "Also send a test notification to the phone"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,5 +31,6 @@ jobs:
           WEATHERAPI_KEY: ${{ secrets.WEATHERAPI_KEY }}
           VISUALCROSSING_KEY: ${{ secrets.VISUALCROSSING_KEY }}
           OWM_KEY: ${{ secrets.OWM_KEY }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOPIC: ${{ inputs.notify && secrets.NTFY_TOPIC || '' }}
+          STATION_PROBE: ${{ inputs.stations }}
           ACCESS_CODE: ${{ secrets.ACCESS_CODE }}
