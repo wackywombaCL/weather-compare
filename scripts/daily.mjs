@@ -20,6 +20,8 @@ import path from "node:path";
 import { SOURCES, PRESETS, isRainyHour, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, mode, cToF } from "../src/sources.js";
 import { recentScores, smartWeights, PSEUDO_NAMES, elementSkill, elementWeights, BEST_MIN_DAYS, bestRecord, rating } from "../src/skill.js";
 import { trimHistory } from "./trim.mjs";
+import { computeBias, biasFor, nudge, BIAS_DAYS } from "../src/best.js";
+import { LOCAL_STATIONS, robustMean, fetchObsNow } from "../src/stations.js";
 
 export const TZ = "America/Los_Angeles";
 export const SET_HOUR = 6;
@@ -30,15 +32,8 @@ const LOCATIONS = [PRESETS.vallejo, PRESETS.napa];
 // (and more similar) than Travis AFB (KSUU, ~20 mi inland), which NWS lists first for Vallejo.
 const STATION_PREF = { napa: ["KAPC"], vallejo: ["KAPC"] };
 // Vallejo temperatures, wind and humidity come from an average of nearby bay-side stations
-// (CWOP personal stations, via the NWS feed), since Napa airport runs much colder on clear nights.
-// Rain still comes from KAPC: these stations don't report precipitation through the feed.
-const LOCAL_STATIONS = {
-  vallejo: [
-    { id: "C0879", name: "Hercules", lat: 38.029, lon: -122.276 },
-    { id: "G7397", name: "Benicia", lat: 38.081, lon: -122.148 },
-    { id: "C6944", name: "Cordelia", lat: 38.172, lon: -122.129 },
-  ],
-};
+// (src/stations.js), since Napa airport runs much colder on clear nights. Rain still comes from
+// KAPC: those stations don't report precipitation through the feed.
 const ROBUST = { temp: 4, wind: 8, hum: 15 };   // drop a station's value this far from the others' median
 const SITE = "https://wackywombacl.github.io/weather-compare/";
 
@@ -133,8 +128,9 @@ export async function setForecast(dateKey, now, log, scores) {
         const entry = { ok: true, leads: {} };
         for (const L of LEADS) {
           const { coverStart: from, windowEnd: end, date } = leads[L];
+          if (s.maxLead != null && L > s.maxLead) continue;   // short-range model: same day only
           const hours = d.hourly.filter(h => h.t >= from && h.t < end);
-          if (hours.length < 6) continue;   // doesn't forecast that far out hour by hour
+          if (hours.length < (s.maxLead != null ? 20 : 6)) continue;   // doesn't forecast that far out hour by hour
           entry.leads[L] = { ...summarize(hours), dayPop: d.daily[date]?.pop ?? null, ...pack(hours, from, end) };
         }
         if (!entry.leads[0]) throw new Error("no hourly data for today");
@@ -164,7 +160,9 @@ export async function setForecast(dateKey, now, log, scores) {
       }
       if (entry.leads[0]) Lc.sources[pid] = entry;
     }
-    const best = buildBest(Lc, okIds, leads, scores, loc.id);
+    const obsNow = await fetchObsNow(loc.id, { now });
+    const best = buildBest(Lc, okIds, leads, scores, loc.id, obsNow);
+    if (best?.nudge != null) log(`  ${loc.id}: stations read ${obsNow.temp}° → Best nudged ${best.nudge > 0 ? "+" : ""}${best.nudge}°`);
     if (best) Lc.sources.best = best;
     log(`  ${loc.id}: ` + Object.entries(Lc.sources).map(([id, x]) => `${id}=${x.ok ? `${x.leads[0].hi}/${x.leads[0].lo}` : "x"}`).join(" "));
   }
@@ -172,18 +170,21 @@ export async function setForecast(dateKey, now, log, scores) {
 }
 
 // "Best forecast": each element (high, low, hourly temps, rain chance, rain timing, amount, wind)
-// blended from the sources that have been most accurate at that element lately.
+// blended from the sources that have been most accurate at that element lately. Temperatures are
+// first corrected for each source's recent warm/cold bias (scores.bias), and today's first hours
+// are nudged toward what the stations read at set time (src/best.js).
 function wavg(pairs, w) {
   const v = pairs.filter(([id, x]) => isNum(x) && (!w || w[id]));
   if (!v.length) return null;
   const ws = v.map(([id]) => w ? w[id] : 1), tw = ws.reduce((a, b) => a + b, 0);
   return v.reduce((s, [, x], i) => s + x * ws[i], 0) / tw;
 }
-function buildBest(Lc, okIds, leads, scores, locId) {
+function buildBest(Lc, okIds, leads, scores, locId, obsNow = null) {
   const full = new Set(scores.days.filter(d => d.loc === locId && (d.lead ?? 0) === 0 && !d.partial).map(d => d.date));
   if (full.size < BEST_MIN_DAYS) return null;
   const sk0 = elementSkill(scores.days, { locs: [locId], lead: 0, n: 14 }).skill;
   const entry = { ok: true, leads: {}, from: {} };
+  const B = biasFor(scores.bias, locId);
   for (const L of LEADS) {
     const skL = elementSkill(scores.days, { locs: [locId], lead: L, n: 14 }).skill;
     const W = el => elementWeights(skL, el, okIds) || elementWeights(sk0, el, okIds);
@@ -192,24 +193,47 @@ function buildBest(Lc, okIds, leads, scores, locId) {
     if (per.length < 2) continue;
     const byT = new Map();
     for (const [id, , hours] of per) for (const h of hours) (byT.get(h.t) || byT.set(h.t, []).get(h.t)).push([id, h]);
-    const hours = [];
+    let hours = [];
     for (const [t, hs] of [...byT.entries()].sort((a, b) => a[0] - b[0])) {
       if (hs.length < 2) continue;
       const rw = w.timing || w.rain;
       const wetShare = wavg(hs.map(([id, h]) => [id, isRainyHour(h) ? 1 : 0]), rw) ?? 0;
       hours.push({
-        t, temp: wavg(hs.map(([id, h]) => [id, h.temp]), w.temp), pop: wavg(hs.map(([id, h]) => [id, h.pop]), w.rain),
+        t, temp: wavg(hs.map(([id, h]) => [id, h.temp - B.hour(id, L, t, TZ)]), w.temp), pop: wavg(hs.map(([id, h]) => [id, h.pop]), w.rain),
         qpf: wavg(hs.map(([id, h]) => [id, h.qpf]), w.amount || w.rain), wind: wavg(hs.map(([id, h]) => [id, h.wind]), w.wind), humidity: wavg(hs.map(([id, h]) => [id, h.humidity]), w.humidity),
         cat: wetShare >= 0.5 ? "rain" : mode(hs.map(([, h]) => h.cat)),
       });
     }
     if (hours.length < 6) continue;
     const { coverStart: from, windowEnd: end } = leads[L];
-    const hiFix = wavg(per.map(([id, x]) => [id, x.hi]), w.high), loFix = wavg(per.map(([id, x]) => [id, x.lo]), w.low);
+    let hiFix = wavg(per.map(([id, x]) => [id, x.hi - B.hi(id, L)]), w.high), loFix = wavg(per.map(([id, x]) => [id, x.lo - B.lo(id, L)]), w.low);
+    if (L === 0 && obsNow) {
+      // Nudge the first hours toward the stations; the high and low move by whatever is left of the nudge at their hour.
+      const temps = hours.filter(h => isNum(h.temp));
+      const tHi = temps.reduce((a, h) => h.temp > a.temp ? h : a, temps[0])?.t, tLo = temps.reduce((a, h) => h.temp < a.temp ? h : a, temps[0])?.t;
+      const nd = nudge(hours, obsNow);
+      if (nd.adj) { hours = nd.rows; entry.nudge = nd.delta; if (isNum(hiFix)) hiFix += nd.adj(tHi); if (isNum(loFix)) loFix += nd.adj(tLo); }
+    }
     entry.leads[L] = { ...summarize(hours), hiFix: r1(hiFix), loFix: r1(loFix), ...(isNum(hiFix) ? { hi: r1(hiFix) } : {}), ...(isNum(loFix) ? { lo: r1(loFix) } : {}), ...pack(hours, from, end) };
     entry.from[L] = Object.fromEntries(Object.entries(w).map(([el, ws]) => [el, ws ? Object.entries(ws).sort((a, b) => b[1] - a[1])[0][0] : null]));
   }
   return entry.leads[0] ? entry : null;
+}
+
+// Each source's recent warm/cold bias by hour, from the saved forecasts and what was observed
+// (src/best.js). Saved in scores.json so the app and the widget correct the same way.
+async function refreshBias(scores, dataDir, now) {
+  const recent = [...new Set(scores.days.map(d => d.date))].sort().slice(-(BIAS_DAYS + 3));
+  const use = scores.days.filter(d => recent.includes(d.date));
+  const snaps = {};
+  for (const d of use) { const k = d.setDate || d.date; if (!(k in snaps)) { const raw = await readJSON(path.join(dataDir, "forecasts", `${k}.json`), null); snaps[k] = raw ? normalize(raw) : null; } }
+  const forecastOf = (d, id) => {
+    const p = snaps[d.setDate || d.date]?.locations?.[d.loc]?.sources?.[id]?.leads?.[d.lead ?? 0];
+    if (!p) return null;
+    const m = new Map(unpack(p).map(h => [h.t, h.temp]));
+    return d.obs.hours.map((_, k) => m.get(d.windowStart + k * 3600e3) ?? null);
+  };
+  scores.bias = { updated: now, days: BIAS_DAYS, table: computeBias(use, forecastOf) };
 }
 
 // ---------- 2. SCORE ----------
@@ -345,14 +369,6 @@ function normalize(snap) {
   return { ...snap, leads, locations };
 }
 
-// Mean of the values after dropping any more than `tol` from the median (one bad sensor can't skew it).
-function robustMean(vals, tol) {
-  const v = vals.filter(isNum).sort((a, b) => a - b);
-  if (!v.length) return null;
-  const med = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
-  const keep = v.filter(x => Math.abs(x - med) <= tol);
-  return r1(mean(keep.length ? keep : v));
-}
 // Observations for a location: one station, or (Vallejo) a local average with rain from KAPC.
 export async function getObservations(loc, win) {
   const base = await fetchObservations(loc, win);
@@ -443,6 +459,8 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
   status.alerted ||= {};
   status.lastRun = now;
   const problems = [];
+  let biasNew = false;
+  if (!scores.bias && scores.days.length) { await refreshBias(scores, dataDir, now); biasNew = true; }
 
   // 1. SET today's forecast
   const snapFile = path.join(dataDir, "forecasts", `${today}.json`);
@@ -509,6 +527,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
       }
     }
   }
+  if (changed) await refreshBias(scores, dataDir, now);
   // Weekly scorecard: Sunday morning, once yesterday has been scored (or by 9am regardless).
   const weekday = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(now);
   const wkKey = `weekly|${today}`;
@@ -523,7 +542,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
   for (const s of SOURCES) scores.sources[s.id] = { name: s.name, short: s.short, group: s.group || null };
   for (const [id, name] of Object.entries(PSEUDO_NAMES)) scores.sources[id] = { name, short: { avg: "Average", smart: "Smart avg", best: "Best" }[id], group: "blend" };
   scores.version = 2;
-  if (changed || setNow || trimmed) {
+  if (changed || setNow || trimmed || biasNew) {
     scores.days.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.lead ?? 0) - (b.lead ?? 0) || (a.loc < b.loc ? -1 : 1));
     scores.updated = now;
     await writeJSON(scoresFile, scores);

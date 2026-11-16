@@ -90,7 +90,7 @@
 
     <section id="secHourly">
       <h2>Next 30 hours</h2>
-      <p class="hint">The black line is the average, with the full range of sources shaded. Tap sources below to draw them on top. Hover or tap the chart for exact values.</p>
+      <p class="hint">The thick line is the Best forecast, the dashed line is the average, and the shading is the full range of sources. Tap sources below to draw them on top. Hover or tap the chart for exact values.</p>
       <div class="panel">
         <div class="chips" id="hourLegend"></div>
         <div class="chart" id="hourChart"></div>
@@ -156,6 +156,9 @@
           <li><b>Smart average:</b> a blend where each source's weight depends on its score over the previous 14 scored days (the best gets full weight; every 8 points behind it cuts the weight by about two-thirds). It needs 3+ scored days per source, and until then equals the plain average.</li>
           <li><b>Recent accuracy shading</b> (Forecast tab): each source's average score over its last 7 scored days. Green 88+ (Great), yellow 80+ (Good), orange 70+ (Fair), red under 70 (Poor).</li>
           <li><b>Best forecast</b> (top of the Forecast tab): each part of the forecast is blended from the sources that have been most accurate at that part over the last 14 scored days: high, low, hourly temperatures, rain chance (Brier), rain start time, rain amount and wind. The leader counts most; others fade out the further behind they are. Days 2+ use each source's accuracy at that range (1 and 2 days ahead). It's also scored here as its own row.</li>
+          <li><b>Warm/cold correction:</b> before blending, each source's temperatures are corrected for how warm or cold it has run in that town over the last 14 scored days, hour by hour and for the high and low (for example, every source has been calling Vallejo's afternoons several degrees too cool). Only the Best forecast is corrected; each source's own numbers are shown as it gives them.</li>
+          <li><b>Rain memory:</b> rain chance, timing and amount weights come from the last 10 days when rain was in play (it rained or a source called for it), not just the last 14 days, so a dry spell doesn't leave one wet day deciding who leads.</li>
+          <li><b>Right now:</b> for Vallejo and Napa, the "now" temperature is what the stations are reading, and the next few hours of the Best forecast are nudged toward it (the nudge fades by about two-thirds every 3 hours). The 6am locked-in forecast gets the same nudge from the 6am reading.</li>
           <li><b>Seasons:</b> meteorological (Winter Dec–Feb, Spring Mar–May, Summer Jun–Aug, Fall Sep–Nov) and Bay Area wet (Nov–Apr) vs. dry (May–Oct).</li>
         </ul>
       </details>
@@ -189,7 +192,7 @@
 
   <footer>
     Data: National Weather Service (api.weather.gov), Open-Meteo (open-meteo.com, CC BY 4.0),
-    MET Norway (api.met.no, CC BY 4.0), Pirate Weather (pirateweather.net), Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap; ECMWF, GFS, ICON and GEM model data via Open-Meteo. Radar: NEXRAD via Iowa Environmental Mesonet. Lightning: NOAA GOES-18 GLM. NFL schedule: ESPN. Maps: Leaflet, &copy; OpenStreetMap contributors. Place search by Open-Meteo Geocoding.
+    MET Norway (api.met.no, CC BY 4.0), Pirate Weather (pirateweather.net), Tomorrow.io, WeatherAPI.com, Visual Crossing, OpenWeatherMap; ECMWF, GFS, ICON, GEM, HRRR and NBM model data via Open-Meteo. Station readings: NWS and CWOP via api.weather.gov. Radar: NEXRAD via Iowa Environmental Mesonet. Lightning: NOAA GOES-18 GLM. NFL schedule: ESPN. Maps: Leaflet, &copy; OpenStreetMap contributors. Place search by Open-Meteo Geocoding.
   </footer>
 </div>
 <dialog class="settings" id="settings" aria-labelledby="settingsTitle">

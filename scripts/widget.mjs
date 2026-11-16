@@ -1,18 +1,19 @@
 // Phone widget feed: the Best forecast for Vallejo and Napa, written to data/widget.json every
 // 30 minutes (widget.yml) for the KWGT home-screen widget (widget/*.kwgt) to read.
-// Same math as the Best forecast card at the top of the Forecast tab: each part (current and
-// hourly temps, high, low, rain chance, wind) is weighted toward the sources that have been most
-// accurate at that part over the last 14 scored days (Vallejo + Napa together).
+// Same math as the Best forecast card at the top of the Forecast tab (src/best.js): each source's
+// temperatures are corrected for its recent warm/cold bias, each part (hourly temps, high, low,
+// rain chance, wind) is weighted toward the sources that have been most accurate at it in that
+// town, and "now" and the next few hours follow what the stations are reading.
 // Flat keys ("v_now", "v_h1_t", ...) keep the widget formulas short: v_ = Vallejo, n_ = Napa.
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { SOURCES, PRESETS, setRequestInit, setKeyProvider, dayKey, localHour, localHourStart, isNum, mean, mode, isRainyHour, icon, catLabel } from "../src/sources.js";
-import { elementSkill, elementWeights } from "../src/skill.js";
+import { weightsBy, biasFor, bestHours, nudge } from "../src/best.js";
+import { fetchObsNow } from "../src/stations.js";
 
 const H = 3600e3;
 const LOCS = [["v", PRESETS.vallejo], ["n", PRESETS.napa]];
-const TRACKED = ["vallejo", "napa"];
 
 function wmean(pairs, w) {
   const v = pairs.filter(([, x]) => isNum(x));
@@ -28,25 +29,19 @@ const fmtTime = (t, tz) => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour
 const dayName = (k, tz) => new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long" }).format(localHourStart(k, 12, tz));
 
 // One location's Best forecast from each source's data ({ id: {current, hourly, daily} }).
-export function bestFor(results, days, loc, now) {
+// bias: the scores.json bias table; obs: latest station reading ({ temp, at }) or null.
+export function bestFor(results, days, loc, now, { bias = null, obs = null } = {}) {
   const tz = loc.tz, ids = Object.keys(results);
-  const sk = [0, 1, 2].map(L => days ? elementSkill(days, { locs: TRACKED, lead: L, n: 14 }).skill : null);
-  const W = (i, e) => sk[0] ? (elementWeights(sk[Math.min(i, 2)], e, ids) || elementWeights(sk[0], e, ids)) : null;
-  const hourCat = (t, i) => {
-    const hs = ids.map(id => [id, results[id].hourly.find(h => h.t === t)]).filter(([, h]) => h);
-    if (!hs.length) return null;
-    const wet = wmean(hs.map(([id, h]) => [id, isRainyHour(h) ? 1 : 0]), W(i, "timing") || W(i, "rain"));
-    return wet >= 0.5 ? "rain" : mode(hs.map(([, h]) => h.cat));
-  };
+  const W = weightsBy(days, { locs: [loc.id], ids });
+  const B = biasFor(bias, loc.id);
+  const maps = Object.fromEntries(ids.map(id => [id, new Map(results[id].hourly.map(h => [h.t, h]))]));
   const h0 = Math.floor(now / H) * H;
-  const cur = wmean(ids.map(id => [id, results[id].current?.temp]), W(0, "temp"));
-  const curCat = hourCat(h0, 0) || mode(ids.map(id => results[id].current?.cat));
-  const hours = [0, 1, 2, 3, 4].map(k => {
-    const t = h0 + k * H;
-    const temp = k === 0 && isNum(cur) ? cur : wmean(ids.map(id => [id, results[id].hourly.find(h => h.t === t)?.temp]), W(0, "temp"));
-    const cat = k === 0 ? curCat : hourCat(t, 0);
-    return { t, label: k === 0 ? "Now" : fmtHour(t, tz), temp, icon: icon(cat, isNight(t, tz)) };
-  });
+  const raw = bestHours(maps, [-1, 0, 1, 2, 3, 4].map(k => h0 + k * H), { W, bias: B, tz, now });
+  const nd = obs ? nudge(raw, obs) : { rows: raw };
+  const rows = nd.rows.slice(1);
+  const cur = obs ? obs.temp : wmean(ids.map(id => [id, results[id].current?.temp]), W(0, "temp")) ?? rows[0]?.temp;
+  const curCat = rows[0]?.cat || mode(ids.map(id => results[id].current?.cat));
+  const hours = rows.map((r, k) => ({ t: h0 + k * H, label: k === 0 ? "Now" : fmtHour(h0 + k * H, tz), temp: k === 0 ? cur : r?.temp ?? null, icon: icon(k === 0 ? curCat : r?.cat, isNight(h0 + k * H, tz)) }));
   const keys = [];
   for (let t = now; keys.length < 6; t += 6 * H) { const k = dayKey(t, tz); if (!keys.includes(k)) keys.push(k); }
   const daysOut = keys.map((k, i) => {
@@ -55,9 +50,11 @@ export function bestFor(results, days, loc, now) {
     const d0 = Math.max(localHourStart(k, 7, tz), i === 0 ? h0 : 0), d1 = localHourStart(k, 19, tz);
     const wind = wmean(ids.map(id => { const v = results[id].hourly.filter(h => h.t >= d0 && h.t < d1).map(h => h.wind).filter(isNum); return [id, v.length ? Math.max(...v) : null]; }), W(i, "wind"));
     const cat = isNum(pop) && pop >= 50 ? "rain" : mode(ds.map(([, x]) => x.cat));
-    return { key: k, name: i === 0 ? "Today" : dayName(k, tz), hi: wmean(ds.map(([id, x]) => [id, x.hi]), W(i, "high")), lo: wmean(ds.map(([id, x]) => [id, x.lo]), W(i, "low")), pop, wind, icon: icon(cat, false) };
+    let hi = wmean(ds.map(([id, x]) => [id, isNum(x.hi) ? x.hi - B.hi(id, i) : null]), W(i, "high")), lo = wmean(ds.map(([id, x]) => [id, isNum(x.lo) ? x.lo - B.lo(id, i) : null]), W(i, "low"));
+    if (i === 0 && obs) { if (isNum(hi)) hi = Math.max(hi, obs.temp); if (isNum(lo)) lo = Math.min(lo, obs.temp); }
+    return { key: k, name: i === 0 ? "Today" : dayName(k, tz), hi, lo, pop, wind, icon: icon(cat, false) };
   });
-  return { now: cur, cat: curCat, night: isNight(now, tz), hours, days: daysOut, sources: ids.length, weighted: !!sk[0] && !!W(0, "temp") };
+  return { now: cur, cat: curCat, night: isNight(now, tz), hours, days: daysOut, sources: ids.length, weighted: !!W(0, "temp"), measured: !!obs, nudge: nd.delta ?? null };
 }
 
 export function flatten(p, b, loc, now) {
@@ -80,8 +77,8 @@ export function flatten(p, b, loc, now) {
 }
 
 export async function run({ dataDir, now = Date.now(), log = console.log } = {}) {
-  let days = null;
-  try { days = JSON.parse(await readFile(path.join(dataDir, "scores.json"), "utf8")).days; } catch {}
+  let days = null, bias = null;
+  try { const sc = JSON.parse(await readFile(path.join(dataDir, "scores.json"), "utf8")); days = sc.days; bias = sc.bias || null; } catch {}
   const out = { updated: now, about: "Best forecast for the Weather Compare phone widget. v_ = Vallejo, n_ = Napa." };
   for (const [p, loc] of LOCS) {
     const results = {};
@@ -90,10 +87,10 @@ export async function run({ dataDir, now = Date.now(), log = console.log } = {})
       try { const d = await s.fetch(loc); if (d?.hourly?.length) results[s.id] = d; } catch (e) { log(`${loc.id}/${s.id}: ${e.message}`); }
     }));
     if (Object.keys(results).length < 2) { log(`${loc.id}: only ${Object.keys(results).length} sources; skipping`); continue; }
-    const b = bestFor(results, days, loc, now);
+    const b = bestFor(results, days, loc, now, { bias, obs: await fetchObsNow(loc.id, { now }) });
     Object.assign(out, flatten(p, b, loc, now));
     out[`${p}_sources`] = b.sources;
-    log(`${loc.id}: ${b.sources} sources${b.weighted ? " (accuracy-weighted)" : ""}: now ${out[`${p}_now`]} ${out[`${p}_cond`]}, ${out[`${p}_hilo`]}`);
+    log(`${loc.id}: ${b.sources} sources${b.weighted ? " (accuracy-weighted)" : ""}${b.measured ? `, stations read now${b.nudge ? ` (nudge ${b.nudge > 0 ? "+" : ""}${b.nudge}°)` : ""}` : ""}: now ${out[`${p}_now`]} ${out[`${p}_cond`]}, ${out[`${p}_hilo`]}`);
   }
   if (!out.v_now && !out.n_now) throw new Error("no forecasts");
   await mkdir(dataDir, { recursive: true });

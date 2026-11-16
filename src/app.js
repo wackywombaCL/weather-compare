@@ -2,6 +2,8 @@ import { PROXY_URL } from "./config.js";
 import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, setProxy, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
 import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS, bestRecord } from "./skill.js";
 import { initAccuracy, renderAccuracy, accData } from "./accuracy.js";
+import { weightsBy, biasFor, bestHours, nudge } from "./best.js";
+import { NOW_STATIONS, fetchObsNow } from "./stations.js";
 
 const HOURS = 30;
 const DAYS = 5;
@@ -20,6 +22,7 @@ export const state = {
   sel: store.get("wc.sel", []),           // sources drawn on charts, in selection order
   slots: store.get("wc.slots", {}),       // source id -> color slot (stable while selected)
   results: {},
+  obs: null,                              // latest station reading for a tracked town: { loc, temp, at, n, names }
   fetchedAt: null,
   run: 0,
 };
@@ -147,7 +150,10 @@ async function loadAll(force = false) {
   const run = ++state.run;
   const loc = state.loc;
   for (const s of SOURCES) state.results[s.id] = { status: "loading" };
+  if (state.obs?.loc !== loc.id) state.obs = null;
   renderAll();
+  // What the stations read right now (Vallejo and Napa only): shown as "now" and used to nudge the next hours.
+  if (NOW_STATIONS[loc.id]) fetchObsNow(loc.id, { signal: controller.signal }).then(o => { if (run === state.run && o) { state.obs = { ...o, loc: loc.id }; renderAll(); } });
   let pending = 0;
   const flush = () => { if (!pending++) requestAnimationFrame(() => { pending = 0; if (run === state.run) renderAll(); }); };
   await Promise.all(SOURCES.map(async s => {
@@ -290,13 +296,32 @@ function wstd(pairs, w) {
   const ws = v.map(([id]) => w ? w[id] : 1), tw = ws.reduce((a, b) => a + b, 0);
   return Math.sqrt(v.reduce((s, [, x], i) => s + ws[i] * (x - m) ** 2, 0) / tw);
 }
-function renderBest() {
-  const el = $("best");
-  if (!el) return;
+// Everything the Best card and the hourly chart/table share: weights, each source's bias, the
+// latest station reading, and the hour-by-hour blend (src/best.js).
+function bestCtx() {
   const days = accData()?.scores?.days;
   const locs = trackedLocs() || ["vallejo", "napa"];
   const full = new Set((days || []).filter(d => locs.includes(d.loc) && (d.lead ?? 0) === 0 && !d.partial).map(d => d.date));
   const ok = okSources(), ids = ok.map(s => s.id), tz = state.loc.tz;
+  const base = { days, locs, full, ok, ids, tz, ready: false };
+  if (!days || full.size < BEST_MIN_DAYS || ok.length < 2) return base;
+  const W = weightsBy(days, { locs, ids });
+  const B = trackedLocs() ? biasFor(accData().scores.bias, state.loc.id) : null;
+  const maps = Object.fromEntries(ok.map(s => [s.id, new Map(state.results[s.id].data.hourly.map(h => [h.t, h]))]));
+  const obs = state.obs && state.obs.loc === state.loc.id && Date.now() - state.obs.at < 90 * 60e3 ? state.obs : null;
+  // Blended hours for `times` (hourly, in order), nudged toward the stations when there is a fresh reading.
+  const hours = times => {
+    const rows = bestHours(maps, [times[0] - 3600e3, ...times], { W, bias: B, tz });
+    const nd = obs ? nudge(rows, obs) : { rows, delta: null };
+    return { rows: nd.rows.slice(1), raw: rows.slice(1), delta: nd.adj ? nd.delta : null, adj: nd.adj || (() => 0) };
+  };
+  return { ...base, ready: true, W, B, obs, hours };
+}
+function renderBest() {
+  const el = $("best");
+  if (!el) return;
+  const ctx = bestCtx();
+  const { days, locs, full, ok, ids, tz } = ctx;
   el.className = "panel best";
   if (!days || full.size < BEST_MIN_DAYS) {
     const left = BEST_MIN_DAYS - full.size;
@@ -305,14 +330,22 @@ function renderBest() {
     return;
   }
   if (ok.length < 2) { el.innerHTML = `<div class="best-wait">Waiting for forecasts…</div>`; return; }
-  const sk = [0, 1, 2].map(L => elementSkill(days, { locs, lead: L, n: 14 }).skill);
-  const skFor = i => sk[Math.min(i, 2)];
-  const W = (i, e) => elementWeights(skFor(i), e, ids) || elementWeights(sk[0], e, ids);
+  const { W, B, obs } = ctx, sk = W.skill;
+  const grid = hourGrid(), hr = ctx.hours(grid);
   const nowHour = Math.floor(Date.now() / 3600e3) * 3600e3;
   const dayInfo = nextDays(tz, DAYS).map((d, i) => {
     const ds = ok.map(s => [s.id, state.results[s.id].data.daily[d.key]]).filter(([, x]) => x);
     const wh = W(i, "high"), wl = W(i, "low"), wr = W(i, "rain"), wa = W(i, "amount") || wr, wt = W(i, "timing") || wr, ww = W(i, "wind");
-    const hi = wmean(ds.map(([id, x]) => [id, x.hi]), wh), lo = wmean(ds.map(([id, x]) => [id, x.lo]), wl);
+    // Highs and lows: each source corrected for its recent warm/cold bias, then blended.
+    let hi = wmean(ds.map(([id, x]) => [id, isNum(x.hi) ? x.hi - (B?.hi(id, i) ?? 0) : null]), wh), lo = wmean(ds.map(([id, x]) => [id, isNum(x.lo) ? x.lo - (B?.lo(id, i) ?? 0) : null]), wl);
+    if (i === 0 && obs) {
+      // Today: if the warmest hour is still ahead, the high moves with whatever is left of the nudge by then.
+      const rest = hr.raw.filter(r => r && isNum(r.temp) && dayKey(r.t, tz) === d.key);
+      const peak = rest.reduce((a, r) => !a || r.temp > a.temp ? r : a, null);
+      if (isNum(hi) && peak && peak !== rest[0]) hi += hr.adj(peak.t);
+      if (isNum(hi)) hi = Math.max(hi, obs.temp);
+      if (isNum(lo)) lo = Math.min(lo, obs.temp);
+    }
     const pop = wmean(ds.map(([id, x]) => [id, x.pop]), wr), qpf = wmean(ds.map(([id, x]) => [id, x.qpf]), wa);
     const rain = isNum(pop) && pop > RAIN_SHOW_POP ? avgRainStart(ok, d.key, i === 0 ? nowHour : null, wt) : null;
     const d0 = localHourStart(d.key, 7, tz), d1 = localHourStart(d.key, 19, tz);
@@ -328,7 +361,10 @@ function renderBest() {
     return { d, i, hi, lo, pop, qpf, rain, wind, humMin, humMax, spread, conf, cat };
   });
   const t = dayInfo[0];
-  const cur = wmean(ok.map(s => [s.id, state.results[s.id].data.current.temp]), W(0, "temp"));
+  // "Now" is what the stations read when there's a fresh reading; otherwise the blend for this hour.
+  const cur = obs ? obs.temp : wmean(ok.map(s => [s.id, state.results[s.id].data.current.temp]), W(0, "temp")) ?? hr.rows[0]?.temp;
+  const nowTitle = obs ? `Measured at ${obs.names.join(", ")} ${ago(obs.at)}` : "Right now, as the sources report it";
+  const strip = hr.rows.slice(0, 24).filter(r => r && isNum(r.temp));
   const leaders = Object.keys(ELEMENTS).map(e => ({ e, L: elementLeader(sk[0], e, ids) })).filter(x => x.L);
   const pill = (txt, title) => `<span class="bpill" title="${esc(title)}">${txt}</span>`;
   // Card colour follows the sky: night, wet, grey or clear.
@@ -340,7 +376,7 @@ function renderBest() {
     <div class="best-hero">
       <div class="best-main">
         <div class="best-kicker">Best forecast · today${trackedLocs() ? "" : " · tuned on Vallejo + Napa"}</div>
-        <div class="best-temps"><span class="i" aria-hidden="true">${icon(t.cat, night && isNum(cur))}</span>${isNum(cur) ? `<span class="hi" title="Right now">${T(cur)}</span><span class="hl"><span title="Today's high">↑ ${T(t.hi)}</span><span title="Today's low">↓ ${T(t.lo)}</span></span>` : `<span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span>`}</div>
+        <div class="best-temps"><span class="i" aria-hidden="true">${icon(t.cat, night && isNum(cur))}</span>${isNum(cur) ? `<span class="hi" title="${esc(nowTitle)}">${T(cur)}</span><span class="hl"><span title="Today's high">↑ ${T(t.hi)}</span><span title="Today's low">↓ ${T(t.lo)}</span></span>` : `<span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span>`}</div>
         <div class="cond">${esc(catLabel(t.cat, false))}${isNum(cur) ? " today" : ""}${t.conf ? ` · <span class="conf conf-${t.conf.toLowerCase()}" title="How closely the most accurate sources agree on the high (±${A(t.spread)})">${t.conf} confidence</span>` : ""}</div>
       </div>
       <div class="best-pills">
@@ -351,6 +387,13 @@ function renderBest() {
         ${isNum(t.humMin) ? pill(`Humidity ${Math.round(t.humMin)}–${Math.round(t.humMax)}%`, "Lowest to highest humidity for the rest of today, weighted toward the sources best at humidity") : ""}
       </div>
     </div>
+    <div class="best-hours" role="list" aria-label="Best forecast, next 24 hours">${strip.map((r, k) => `
+      <div class="bhour" role="listitem">
+        <div class="bh-t">${k === 0 ? "Now" : esc(fmtHour(r.t, tz))}</div>
+        <div class="bh-i" aria-hidden="true">${icon(r.cat, isNightHour(r.t, tz))}</div>
+        <div class="bh-v">${T(k === 0 ? cur : r.temp)}</div>
+        <div class="bh-p">${isNum(r.pop) && r.pop >= 20 ? "💧" + Math.round(r.pop) + "%" : "&nbsp;"}</div>
+      </div>`).join("")}</div>
     <div class="best-days">${dayInfo.slice(1).map(x => `
       <div class="bday" title="${x.conf ? x.conf + " confidence" : ""}">
         <div class="dn">${esc(fmtDay(x.d.ms, tz))}</div>
@@ -364,11 +407,14 @@ function renderBest() {
       ${rec ? `<a class="best-track" href="#accuracy" title="See the Best forecast report card">Track record: <b>${rec.score.toFixed(1)}</b> average score over ${rec.n} scored ${locs.length > 1 ? "forecasts" : "days"} · #${rec.rank} of ${rec.of} ›</a>` : ""}
       <details class="best-from">
         <summary>Built from the most accurate sources (last ${Math.min(14, full.size)} scored days)</summary>
-        <ul>${leaders.map(({ e, L }) => `<li><span class="bel">${ELEMENTS[e].label}</span><span class="bsrc">${esc(srcShort(L.id))}</span><span class="berr">${ERR_WORD[ELEMENTS[e].fmt]} ${fmtErr(e, L.err)}</span></li>`).join("")}
+        <ul>${obs ? `<li class="bmore">Now: measured at ${esc(obs.names.join(", "))} ${esc(ago(obs.at))}.${hr.delta ? ` The next few hours are nudged ${hr.delta > 0 ? "up" : "down"} ${A(Math.abs(hr.delta))} to match.` : ""}</li>` : ""}
+        ${B?.any ? `<li class="bmore">Temperatures are corrected for each source's recent habit of running warm or cold here.</li>` : ""}
+        ${leaders.map(({ e, L }) => `<li><span class="bel">${ELEMENTS[e].label}</span><span class="bsrc">${esc(srcShort(L.id))}</span><span class="berr">${ERR_WORD[ELEMENTS[e].fmt]} ${fmtErr(e, L.err)}</span></li>`).join("")}
         ${leaders.length < Object.keys(ELEMENTS).length ? `<li class="bmore">${Object.keys(ELEMENTS).filter(e => !leaders.some(x => x.e === e)).map(e => ELEMENTS[e].label).join(", ")}: not enough data yet, so those use all sources equally.</li>` : ""}</ul>
       </details>
     </div>`;
 }
+const isNightHour = (t, tz) => { const h = localHour(t, tz); return h < 7 || h >= 18; };
 const W_ = mph => !isNum(mph) ? "—" : state.units === "F" ? Math.round(mph) + " mph" : Math.round(mph * 1.609) + " km/h";
 
 // Average rain start for a local day: each source's first rainy hour that day, averaged.
@@ -437,15 +483,22 @@ function renderHourly() {
   $("hourLegend").querySelectorAll("[data-sel]").forEach(b => b.addEventListener("click", () => { toggleSel(b.dataset.sel); renderHourly(); renderAccuracy(); }));
   $("hourLegend").querySelector("[data-clear]")?.addEventListener("click", () => { state.sel = []; state.slots = {}; store.set("wc.sel", []); store.set("wc.slots", {}); renderHourly(); renderAccuracy(); });
 
+  const ctx = bestCtx(), best = ctx.ready ? ctx.hours(grid).rows : null;
   if (ok.length) {
     const avg = grid.map(t => wmean(ok.map(s => [s.id, maps[s.id].get(t)?.temp]), weights));
     const lo = grid.map(t => { const v = ok.map(s => maps[s.id].get(t)?.temp).filter(isNum); return v.length ? Math.min(...v) : null; });
     const hi = grid.map(t => { const v = ok.map(s => maps[s.id].get(t)?.temp).filter(isNum); return v.length ? Math.max(...v) : null; });
     const pop = grid.map(t => wmean(ok.map(s => [s.id, maps[s.id].get(t)?.pop]), weights));
     const qpf = grid.map(t => wmean(ok.map(s => [s.id, maps[s.id].get(t)?.qpf]), weights));
-    const ser = [{ name: weights ? "Smart avg" : "Average", color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: ok.length > 1 ? [lo.map(cvt), hi.map(cvt)] : null }];
+    const avgName = weights ? "Smart avg" : "Average";
+    // The Best forecast is the main line once it's available; the average stays as a thin dashed line.
+    const ser = best
+      ? [{ name: "Best", color: "var(--avg)", width: 3, values: best.map(r => cvt(r?.temp)), band: ok.length > 1 ? [lo.map(cvt), hi.map(cvt)] : null, pops: best.map(r => r?.pop) },
+         { name: avgName, color: "var(--text-3)", width: 1.5, dash: "5 4", values: avg.map(cvt) }]
+      : [{ name: avgName, color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: ok.length > 1 ? [lo.map(cvt), hi.map(cvt)] : null }];
+    if (best) { best.forEach((r, i) => { if (r) { pop[i] = r.pop; qpf[i] = r.qpf; } }); }
     for (const id of state.sel) if (maps[id]) ser.push({ name: srcShort(id), color: selColor(id), values: grid.map(t => cvt(maps[id].get(t)?.temp)), pops: grid.map(t => maps[id].get(t)?.pop) });
-    lineChart($("hourChart"), grid, ser, { tz, bars: pop, amounts: qpf, directLabels: ser.length > 1, extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span class="tipp">💧${Math.round(x.pops[i])}%</span>` : "" });
+    lineChart($("hourChart"), grid, ser, { tz, bars: pop, amounts: qpf, directLabels: ser.length > (best ? 2 : 1), extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span class="tipp">💧${Math.round(x.pops[i])}%</span>` : "" });
   } else $("hourChart").innerHTML = "";
 
   // Table: best sources first; icons only when conditions change; rain chance only when 20%+.
@@ -475,6 +528,10 @@ function renderHourly() {
     }).join("");
   };
   let body = "";
+  if (best) {
+    const byT = new Map(best.filter(Boolean).map(r => [r.t, r]));
+    body += `<tr class="avgrow bestrow"><th>Best</th>` + row("best", t => { const r = byT.get(t); return r ? { ...r, night: isNightHour(t, tz), text: "" } : null; }) + `</tr>`;
+  }
   if (ok.length > 1) {
     body += `<tr class="avgrow"><th>${weights ? "Smart avg" : "Average"}</th>` + row("avg", t => {
       const hs = ok.map(s => [s.id, maps[s.id].get(t)]).filter(([, h]) => h);

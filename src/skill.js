@@ -65,15 +65,25 @@ export const ELEMENTS = {
   wind:   { label: "Wind",          err: s => s.windMae,      scale: 1.0,  min: 3, fmt: "mph" },
   humidity: { label: "Humidity",    err: s => s.humMae,       scale: 3.0,  min: 3, fmt: "pct" },
 };
+// Rain skill uses a longer memory than temperature: the last WET_DAYS days when rain was in play
+// (it rained, or a source called for it), however far back those are. Two dry weeks would
+// otherwise leave one or two wet days deciding who leads on rain.
+const WET_ELEMENTS = new Set(["rain", "timing", "amount"]);
+export const WET_DAYS = 10, WET_MIN_DAYS = 3;
+const rainInPlay = d => !!d.obs?.rained || Object.entries(d.src || {}).some(([id, s]) => !PSEUDO.has(id) && s?.ok && (s.rain === "hit" || s.rain === "false" || (isNum(s.maxPop) && s.maxPop >= 30)));
 export function elementSkill(days, { locs = null, lead = 0, n = 7, before = null } = {}) {
   const pool = days.filter(d => (d.lead ?? 0) === lead && !d.partial && (!locs || locs.includes(d.loc)) && (!before || d.date < before));
   const dates = [...new Set(pool.map(d => d.date))].sort().slice(-n);
   const use = pool.filter(d => dates.includes(d.date));
+  const wetDates = [...new Set(pool.filter(rainInPlay).map(d => d.date))].sort().slice(-WET_DAYS);
+  const wet = wetDates.length >= WET_MIN_DAYS ? new Set(wetDates) : null;
   const out = {};
   for (const el of Object.keys(ELEMENTS)) out[el] = {};
-  for (const d of use) for (const [id, s] of Object.entries(d.src)) {
+  for (const d of pool) for (const [id, s] of Object.entries(d.src)) {
     if (!s?.ok || PSEUDO.has(id)) continue;
+    const recent = dates.includes(d.date);
     for (const [el, E] of Object.entries(ELEMENTS)) {
+      if (WET_ELEMENTS.has(el) && wet ? !wet.has(d.date) : !recent) continue;
       const e = E.err(s, d);
       if (!isNum(e)) continue;
       const o = (out[el][id] ||= { sum: 0, n: 0 });
@@ -81,7 +91,7 @@ export function elementSkill(days, { locs = null, lead = 0, n = 7, before = null
     }
   }
   for (const el of Object.keys(out)) for (const id of Object.keys(out[el])) out[el][id] = { err: out[el][id].sum / out[el][id].n, n: out[el][id].n };
-  return { skill: out, dates };
+  return { skill: out, dates, wetDates: wet ? wetDates : null };
 }
 // Weights for one element among `ids` (sources with data right now). Null until 2+ sources have enough history.
 export function elementWeights(skill, el, ids = null) {

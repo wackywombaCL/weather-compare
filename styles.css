@@ -321,7 +321,17 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .conf-medium { background: color-mix(in srgb, var(--warning) 26%, var(--surface)); }
 .conf-low { background: color-mix(in srgb, var(--serious) 24%, var(--surface)); }
 .best-on .conf { background: rgba(255,255,255,.18); color: #fff; }
-.best-days { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 18px; }
+/* Hour-by-hour strip: swipe sideways for the next 24 hours */
+.best-hours { display: flex; gap: 6px; overflow-x: auto; margin: 18px -18px 0; padding: 0 18px 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.best-hours::-webkit-scrollbar { display: none; }
+.bhour { flex: 0 0 56px; text-align: center; background: var(--surface-2); border-radius: 14px; padding: 9px 2px 7px; }
+.bhour:first-child { background: rgba(255,255,255,.26); }
+.bh-t { font-size: 12px; color: var(--text-2); }
+.bh-i { font-size: 21px; line-height: 1.55; }
+.bh-v { font-weight: 650; font-size: 16px; font-variant-numeric: tabular-nums; }
+.bh-p { font-size: 11px; color: var(--text-2); min-height: 15px; }
+tr.bestrow th { font-weight: 750; }
+.best-days { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .bday { background: var(--surface-2); border-radius: 14px; padding: 10px 6px; text-align: center; min-width: 0; }
 .bday .dn { font-weight: 600; font-size: 13px; } .bday .di { font-size: 26px; line-height: 1.35; }
 .bday .hl { font-variant-numeric: tabular-nums; font-weight: 600; } .bday .hl .lo { color: var(--text-3); font-weight: 400; }

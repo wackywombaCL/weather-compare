@@ -213,13 +213,19 @@ export const MODELS = [
   { id: "m_icon",  model: "icon_seamless", name: "ICON (German model)",   short: "ICON" },
   { id: "m_gem",   model: "gem_seamless", name: "GEM (Canadian model)",   short: "GEM" },
 ];
+// US-only models, asked for separately so a problem with them can't take the global ones down.
+// HRRR only runs two days out, so it is tracked for the same day only.
+export const MODELS_US = [
+  { id: "m_hrrr", model: "gfs_hrrr", name: "HRRR (US short-range model)", short: "HRRR", maxLead: 0, shortRange: true },
+  { id: "m_nbm",  model: "ncep_nbm_conus", name: "NBM (NOAA blend of models)", short: "NBM" },
+];
 const modelFetches = new Map();
-function fetchModelsOnce(loc, signal) {
-  const key = `${(+loc.lat).toFixed(3)},${(+loc.lon).toFixed(3)}`;
+function fetchModelsOnce(loc, signal, group = MODELS) {
+  const key = `${group[0].id}|${(+loc.lat).toFixed(3)},${(+loc.lon).toFixed(3)}`;
   const hit = modelFetches.get(key);
   if (hit && Date.now() - hit.at < 60e3) return hit.p;
   const q = new URLSearchParams({
-    latitude: loc.lat, longitude: loc.lon, models: MODELS.map(m => m.model).join(","),
+    latitude: loc.lat, longitude: loc.lon, models: group.map(m => m.model).join(","),
     current: "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,wind_direction_10m",
     hourly: "temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,is_day",
     daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum",
@@ -244,9 +250,10 @@ function fillGaps(hours) {
   }
   return hours.filter(h => isNum(h.temp));
 }
-function makeModelFetch(m) {
+function makeModelFetch(m, group = MODELS) {
   return async (loc, signal) => {
-    const j = await fetchModelsOnce(loc, signal);
+    if (group === MODELS_US && loc.country && loc.country !== "US") throw Object.assign(new Error("US locations only"), { friendly: true });
+    const j = await fetchModelsOnce(loc, signal, group);
     const tz = loc.tz || j.timezone;
     const pick = (block, name) => block?.[`${name}_${m.model}`] ?? block?.[name];
     const c = j.current || {};
@@ -272,9 +279,13 @@ function makeModelFetch(m) {
     if (!isNum(pick(c, "temperature_2m")) || !(`temperature_2m_${m.model}` in c)) { current.feels = null; current.humidity = null; current.windDir = null; }
     const d = j.daily || {};
     const daily = {};
+    // A short-range model's last day is only part of a day: leave it out rather than show a wrong high/low.
+    const perDay = {};
+    if (m.shortRange) (h.time || []).forEach((t, i) => { if (isNum(T[i])) { const k = dayKey(t * 1000, tz); perDay[k] = (perDay[k] || 0) + 1; } });
     (d.time || []).forEach((t, i) => {
       const hi = pick(d, "temperature_2m_max")?.[i], lo = pick(d, "temperature_2m_min")?.[i];
       if (!isNum(hi) && !isNum(lo)) return;
+      if (m.shortRange && (perDay[dayKey(t * 1000 + 12 * 3600e3, tz)] || 0) < 20) return;
       const [cat, text] = wmo(pick(d, "weather_code")?.[i]);
       daily[dayKey(t * 1000 + 12 * 3600e3, tz)] = { hi, lo, pop: pick(d, "precipitation_probability_max")?.[i] ?? null, qpf: pick(d, "precipitation_sum")?.[i] ?? null, cat, text };
     });
@@ -584,4 +595,5 @@ export const SOURCES = [
   { id: "owm",       name: "OpenWeatherMap",           short: "OpenWeather", site: "https://openweathermap.org", fetch: fetchOWM,
     key: { env: "OWM_KEY", signup: "https://home.openweathermap.org/api_keys" } },
   ...MODELS.map(m => ({ id: m.id, name: m.name, short: m.short, site: "https://open-meteo.com/en/docs/model-updates", group: "model", fetch: makeModelFetch(m) })),
+  ...MODELS_US.map(m => ({ id: m.id, name: m.name, short: m.short, site: "https://open-meteo.com/en/docs/model-updates", group: "model", maxLead: m.maxLead, fetch: makeModelFetch(m, MODELS_US) })),
 ];

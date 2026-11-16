@@ -30,3 +30,22 @@ const bad = bestRecord(mk(6), { locs: ["vallejo"], ids });
 assert.equal(bad.rank, 4); assert.equal(bad.beatAll, 0); assert.ok(bad.margin < 0);
 assert.equal(bestRecord(mk(null), { ids }), null);
 console.log("best-record: 3 checks passed");
+
+// Rain memory: rain weights come from the last 10 days rain was in play, however far back;
+// temperature weights still come from the most recent days only.
+{
+  const day = (i, wet) => ({ date: new Date(Date.UTC(2026, 9, 1 + i)).toISOString().slice(0, 10), loc: "vallejo", lead: 0, obs: { rained: wet },
+    src: { a: { ok: true, hiErr: 1, loErr: 1, mae: 1, brier: wet ? 0.02 : 0, maxPop: wet ? 90 : 0, rain: wet ? "hit" : "none" },
+           b: { ok: true, hiErr: 1, loErr: 1, mae: 1, brier: wet ? 0.6 : 0, maxPop: wet ? 20 : 0, rain: wet ? "miss" : "none" } } });
+  // 4 wet days early in the month, then 20 dry ones.
+  const hist = Array.from({ length: 24 }, (_, i) => day(i, i < 4));
+  const sk = elementSkill(hist, { n: 14 });
+  assert.equal(sk.wetDates.length, 4);
+  assert.equal(sk.skill.rain.a.n, 4); assert.ok(sk.skill.rain.b.err > 0.5);     // remembered from 3 weeks ago
+  assert.equal(sk.skill.temp.a.n, 14);                                           // temperature: last 14 days only
+  const w = elementWeights(sk.skill, "rain", ["a", "b"]); assert.ok(w.a > 100 * w.b);
+  // With fewer than 3 such days it falls back to the recent window.
+  const dry = elementSkill(Array.from({ length: 24 }, (_, i) => day(i, i < 2)), { n: 14 });
+  assert.equal(dry.wetDates, null); assert.equal(dry.skill.rain.a.n, 14);
+  console.log("best-record: rain memory check passed");
+}
