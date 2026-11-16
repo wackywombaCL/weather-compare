@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Weather Compare</title>
 <meta name="description" content="Side-by-side forecasts from multiple weather providers, a blended average, and a running accuracy scoreboard.">
-<meta name="theme-color" content="#111110" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0e14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -23,27 +23,31 @@
       <h1>Weather Compare</h1>
       <div class="loc" id="locLabel">Loading…</div>
     </div>
-    <div class="controls">
-      <button class="btn preset" data-preset="vallejo">Vallejo</button>
-      <button class="btn preset" data-preset="napa">Napa</button>
-      <button class="btn" id="geoBtn" title="Use my location">📍 Me</button>
-      <button class="btn" id="unitBtn" title="Switch units">°F</button>
-      <button class="btn" id="refreshBtn" title="Refresh">↻</button>
-      <button class="btn" id="settingsBtn" title="Settings: API keys">⚙️</button>
+    <div class="controls tools">
+      <button class="btn icon" id="unitBtn" title="Switch units">°F</button>
+      <button class="btn icon" id="refreshBtn" title="Refresh" aria-label="Refresh">↻</button>
+      <button class="btn icon" id="settingsBtn" title="Settings: API keys" aria-label="Settings">⚙️</button>
     </div>
-    <div class="search">
-      <label class="sr" for="q">Search for a city</label>
-      <input id="q" type="search" placeholder="Search a city…" autocomplete="off">
-      <ul class="suggest" id="suggest" hidden></ul>
+    <div class="places">
+      <div class="controls">
+        <button class="btn preset" data-preset="vallejo">Vallejo</button>
+        <button class="btn preset" data-preset="napa">Napa</button>
+        <button class="btn" id="geoBtn" title="Use my location">📍 Me</button>
+      </div>
+      <div class="search">
+        <label class="sr" for="q">Search for a city</label>
+        <input id="q" type="search" placeholder="Search a city…" autocomplete="off">
+        <ul class="suggest" id="suggest" hidden></ul>
+      </div>
     </div>
   </header>
 
   <nav class="tabs" role="tablist">
-    <button class="tab" role="tab" id="tabForecast" aria-controls="viewForecast" aria-selected="true">Forecast</button>
-    <button class="tab" role="tab" id="tabAccuracy" aria-controls="viewAccuracy" aria-selected="false">Accuracy</button>
-    <button class="tab" role="tab" id="tabRadar" aria-controls="viewRadar" aria-selected="false">Radar</button>
-    <button class="tab" role="tab" id="tabNFL" aria-controls="viewNFL" aria-selected="false">NFL</button>
-    <button class="tab" role="tab" id="tabStadiums" aria-controls="viewStadiums" aria-selected="false">Stadiums</button>
+    <button class="tab" role="tab" id="tabForecast" aria-controls="viewForecast" aria-selected="true"><svg class="ti" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg><span>Forecast</span></button>
+    <button class="tab" role="tab" id="tabAccuracy" aria-controls="viewAccuracy" aria-selected="false"><svg class="ti" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/></svg><span>Accuracy</span></button>
+    <button class="tab" role="tab" id="tabRadar" aria-controls="viewRadar" aria-selected="false"><svg class="ti" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 12l6.2-6.2M12 7a5 5 0 105 5"/></svg><span>Radar</span></button>
+    <button class="tab" role="tab" id="tabNFL" aria-controls="viewNFL" aria-selected="false"><svg class="ti" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9.5" ry="5.6" transform="rotate(-45 12 12)"/><path d="M9.6 14.4l4.8-4.8M10.4 11.2l2.4 2.4M11.2 10.4l2.4 2.4"/></svg><span>NFL</span></button>
+    <button class="tab" role="tab" id="tabStadiums" aria-controls="viewStadiums" aria-selected="false"><svg class="ti" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.5s-6.5-5.6-6.5-10.6a6.5 6.5 0 0113 0c0 5-6.5 10.6-6.5 10.6z"/><circle cx="12" cy="10.8" r="2.3"/></svg><span>Stadiums</span></button>
   </nav>
 
   <!-- ================= FORECAST ================= -->
@@ -106,7 +110,13 @@
     <div class="healthrow" id="accHealth"></div>
     <div class="sub2" id="accStations" style="margin:4px 0 0"></div>
 
-    <section style="margin-top:0">
+    <section id="secBestTrack" style="margin-top:22px">
+      <h2>Best forecast report card</h2>
+      <p class="hint">How the Best forecast (top of the Forecast tab) has scored since it started, next to every single source on the same days. This is for tracking only: these scores never feed back into the Best forecast.</p>
+      <div id="accBest"></div>
+    </section>
+
+    <section>
       <h2>Today's locked-in forecast</h2>
       <p class="hint">Set at 6am Pacific for the next 24 hours (6am to 6am). It gets scored tomorrow morning against real station observations.</p>
       <div id="accToday"></div>

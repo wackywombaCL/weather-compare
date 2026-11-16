@@ -98,3 +98,46 @@ export function elementLeader(skill, el, ids = null) {
 }
 // The Best forecast needs this many fully scored days first.
 export const BEST_MIN_DAYS = 3;
+
+// ---------- Best forecast track record (display only) ----------
+// How the Best forecast has scored against every single source, on the days it was scored.
+// Read-only: nothing here (or any Best score) feeds back into the weights. elementSkill and
+// smartWeights skip the blends ("avg", "smart", "best") entirely.
+export function bestRecord(days, { locs = null, lead = 0, ids = null } = {}) {
+  const rows = (days || []).filter(d => (d.lead ?? 0) === lead && !d.partial && (!locs || locs.includes(d.loc)) && isNum(dayScore(d.src?.best)));
+  if (!rows.length) return null;
+  const per = {}, byDate = {};
+  let beatAll = 0, beatAvg = 0, nAvg = 0;
+  for (const d of rows) {
+    const b = dayScore(d.src.best);
+    let top = -Infinity;
+    for (const [id, s] of Object.entries(d.src)) {
+      if (PSEUDO.has(id) || (ids && !ids.includes(id))) continue;
+      const v = dayScore(s);
+      if (!isNum(v)) continue;
+      (per[id] ||= []).push(v);
+      if (v > top) top = v;
+    }
+    if (b >= top) beatAll++;
+    const a = dayScore(d.src.avg);
+    if (isNum(a)) { nAvg++; if (b > a) beatAvg++; }
+    const o = (byDate[d.date] ||= { best: [], avg: [], src: {} });
+    o.best.push(b); o.avg.push(a);
+    for (const [id, s] of Object.entries(d.src)) if (!PSEUDO.has(id)) (o.src[id] ||= []).push(dayScore(s));
+  }
+  // Single sources that were scored on at least half of those days.
+  const singles = Object.entries(per).filter(([, v]) => v.length >= rows.length / 2).map(([id, v]) => ({ id, score: mean(v), n: v.length })).sort((a, b) => b.score - a.score);
+  const score = mean(rows.map(d => dayScore(d.src.best)));
+  const abs = k => mean(rows.map(d => isNum(d.src.best[k]) ? Math.abs(d.src.best[k]) : null));
+  const top = singles[0] || null;
+  const dates = Object.keys(byDate).sort();
+  return {
+    n: rows.length, nDates: dates.length, since: dates[0], score,
+    rank: 1 + singles.filter(s => s.score > score).length, of: singles.length + 1,
+    top, margin: top ? score - top.score : null, singles,
+    beatAll, beatAvg, nAvg, avgScore: mean(rows.map(d => dayScore(d.src.avg))), smartScore: mean(rows.map(d => dayScore(d.src.smart))),
+    hiMAE: abs("hiErr"), loMAE: abs("loErr"), mae: mean(rows.map(d => d.src.best.mae)),
+    rainRight: rows.filter(d => d.src.best.rain === "hit" || d.src.best.rain === "none").length / rows.length,
+    series: dates.map(date => ({ date, best: mean(byDate[date].best), avg: mean(byDate[date].avg), top: top ? mean(byDate[date].src[top.id] || []) : null })),
+  };
+}

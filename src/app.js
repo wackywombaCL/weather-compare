@@ -1,6 +1,6 @@
 import { PROXY_URL } from "./config.js";
 import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, setProxy, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
-import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS } from "./skill.js";
+import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS, bestRecord } from "./skill.js";
 import { initAccuracy, renderAccuracy, accData } from "./accuracy.js";
 
 const HOURS = 30;
@@ -297,6 +297,7 @@ function renderBest() {
   const locs = trackedLocs() || ["vallejo", "napa"];
   const full = new Set((days || []).filter(d => locs.includes(d.loc) && (d.lead ?? 0) === 0 && !d.partial).map(d => d.date));
   const ok = okSources(), ids = ok.map(s => s.id), tz = state.loc.tz;
+  el.className = "panel best";
   if (!days || full.size < BEST_MIN_DAYS) {
     const left = BEST_MIN_DAYS - full.size;
     const eta = fmtDayLong(Date.now() + left * 24 * 3600e3, tz).split(",").slice(0, 2).join(",");
@@ -330,24 +331,24 @@ function renderBest() {
   const cur = wmean(ok.map(s => [s.id, state.results[s.id].data.current.temp]), W(0, "temp"));
   const leaders = Object.keys(ELEMENTS).map(e => ({ e, L: elementLeader(sk[0], e, ids) })).filter(x => x.L);
   const pill = (txt, title) => `<span class="bpill" title="${esc(title)}">${txt}</span>`;
+  // Card colour follows the sky: night, wet, grey or clear.
+  const night = (h => h < 7 || h >= 18)(localHour(Date.now(), tz));
+  const sky = night ? "night" : ["rain", "drizzle", "thunder", "snow", "sleet"].includes(t.cat) ? "rain" : ["clear", "partly"].includes(t.cat) ? "clear" : "cloud";
+  el.className = `panel best best-on sky-${sky}`;
+  const rec = bestRecord(days, { locs, lead: 0, ids: SOURCES.map(s => s.id) });
   el.innerHTML = `
     <div class="best-hero">
       <div class="best-main">
         <div class="best-kicker">Best forecast · today${trackedLocs() ? "" : " · tuned on Vallejo + Napa"}</div>
-        <div class="best-temps"><span class="i" aria-hidden="true">${icon(t.cat, false)}</span><span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span></div>
-        <div class="cond">${esc(catLabel(t.cat, false))}${isNum(cur) ? ` · now ${T(cur)}` : ""}${t.conf ? ` · <span class="conf conf-${t.conf.toLowerCase()}" title="How closely the most accurate sources agree on the high (±${A(t.spread)})">${t.conf} confidence</span>` : ""}</div>
-        <div class="best-pills">
-          ${pill(`💧 ${P(t.pop)} chance of rain`, "Rain chance, weighted toward the sources best at rain chances lately")}
-          ${t.rain ? pill(`🌧️ ${t.rain.now ? "raining now" : "starts ~" + esc(fmtTime(t.rain.t, tz))}`, `Weighted toward the sources best at rain timing (${t.rain.n} of ${t.rain.of} sources call for rain)`) : ""}
-          ${wetAmt(t.qpf) ? pill(`☔ ${R(t.qpf)}`, "Rain total, weighted toward the sources best at amounts") : ""}
-          ${isNum(t.wind) ? pill(`💨 up to ${W_(t.wind)}`, "Peak daytime wind, weighted toward the sources best at wind") : ""}
-          ${isNum(t.humMin) ? pill(`Humidity ${Math.round(t.humMin)}–${Math.round(t.humMax)}%`, "Lowest to highest humidity for the rest of today, weighted toward the sources best at humidity") : ""}
-        </div>
+        <div class="best-temps"><span class="i" aria-hidden="true">${icon(t.cat, night && isNum(cur))}</span>${isNum(cur) ? `<span class="hi" title="Right now">${T(cur)}</span><span class="hl"><span title="Today's high">↑ ${T(t.hi)}</span><span title="Today's low">↓ ${T(t.lo)}</span></span>` : `<span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span>`}</div>
+        <div class="cond">${esc(catLabel(t.cat, false))}${isNum(cur) ? " today" : ""}${t.conf ? ` · <span class="conf conf-${t.conf.toLowerCase()}" title="How closely the most accurate sources agree on the high (±${A(t.spread)})">${t.conf} confidence</span>` : ""}</div>
       </div>
-      <div class="best-from">
-        <div class="best-kicker">Built from the most accurate sources (last ${Math.min(14, full.size)} scored days)</div>
-        <ul>${leaders.map(({ e, L }) => `<li><span class="bel">${ELEMENTS[e].label}</span><span class="bsrc">${esc(srcShort(L.id))}</span><span class="berr">${ERR_WORD[ELEMENTS[e].fmt]} ${fmtErr(e, L.err)}</span></li>`).join("")}
-        ${leaders.length < Object.keys(ELEMENTS).length ? `<li class="bmore">${Object.keys(ELEMENTS).filter(e => !leaders.some(x => x.e === e)).map(e => ELEMENTS[e].label).join(", ")}: not enough data yet, so those use all sources equally.</li>` : ""}</ul>
+      <div class="best-pills">
+        ${pill(`💧 ${P(t.pop)} chance of rain`, "Rain chance, weighted toward the sources best at rain chances lately")}
+        ${t.rain ? pill(`🌧️ ${t.rain.now ? "raining now" : "starts ~" + esc(fmtTime(t.rain.t, tz))}`, `Weighted toward the sources best at rain timing (${t.rain.n} of ${t.rain.of} sources call for rain)`) : ""}
+        ${wetAmt(t.qpf) ? pill(`☔ ${R(t.qpf)}`, "Rain total, weighted toward the sources best at amounts") : ""}
+        ${isNum(t.wind) ? pill(`💨 up to ${W_(t.wind)}`, "Peak daytime wind, weighted toward the sources best at wind") : ""}
+        ${isNum(t.humMin) ? pill(`Humidity ${Math.round(t.humMin)}–${Math.round(t.humMax)}%`, "Lowest to highest humidity for the rest of today, weighted toward the sources best at humidity") : ""}
       </div>
     </div>
     <div class="best-days">${dayInfo.slice(1).map(x => `
@@ -358,7 +359,15 @@ function renderBest() {
         <div class="pp">💧 ${P(x.pop)}${wetAmt(x.qpf) ? ` · ☔ ${R(x.qpf)}` : ""}</div>
         ${x.rain ? `<div class="rs">🌧️ ~${esc(fmtTime(x.rain.t, tz))}</div>` : ""}
         ${x.conf ? `<div class="conf conf-${x.conf.toLowerCase()}">${x.conf}</div>` : ""}
-      </div>`).join("")}</div>`;
+      </div>`).join("")}</div>
+    <div class="best-foot">
+      ${rec ? `<a class="best-track" href="#accuracy" title="See the Best forecast report card">Track record: <b>${rec.score.toFixed(1)}</b> average score over ${rec.n} scored ${locs.length > 1 ? "forecasts" : "days"} · #${rec.rank} of ${rec.of} ›</a>` : ""}
+      <details class="best-from">
+        <summary>Built from the most accurate sources (last ${Math.min(14, full.size)} scored days)</summary>
+        <ul>${leaders.map(({ e, L }) => `<li><span class="bel">${ELEMENTS[e].label}</span><span class="bsrc">${esc(srcShort(L.id))}</span><span class="berr">${ERR_WORD[ELEMENTS[e].fmt]} ${fmtErr(e, L.err)}</span></li>`).join("")}
+        ${leaders.length < Object.keys(ELEMENTS).length ? `<li class="bmore">${Object.keys(ELEMENTS).filter(e => !leaders.some(x => x.e === e)).map(e => ELEMENTS[e].label).join(", ")}: not enough data yet, so those use all sources equally.</li>` : ""}</ul>
+      </details>
+    </div>`;
 }
 const W_ = mph => !isNum(mph) ? "—" : state.units === "F" ? Math.round(mph) + " mph" : Math.round(mph * 1.609) + " km/h";
 

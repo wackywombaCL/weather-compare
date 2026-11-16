@@ -1,6 +1,6 @@
 // Accuracy tab: reads data/scores.json, data/status.json and the saved 6am forecasts written by the daily job.
 import { SOURCES, PRESETS, isNum, mean, dayKey } from "./sources.js";
-import { dayScore, rating, PSEUDO } from "./skill.js";
+import { dayScore, rating, PSEUDO, bestRecord } from "./skill.js";
 import { state, store, $, esc, T, D, A, R, fmtTime, fmtDayLong, lineChart, cvt, srcName, srcShort, isSelected, toggleSel, selColor, badge, renderAll } from "./app.js";
 
 const TZ = "America/Los_Angeles";
@@ -90,9 +90,63 @@ export function renderAccuracy() {
   document.querySelectorAll("#accLoc button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.loc === loc)));
   if (!acc.loaded) { $("accToday").innerHTML = $("accRecent").innerHTML = `<p class="empty">Loading…</p>`; return; }
   renderHealth();
+  renderBestTrack(loc);
   renderToday(loc);
   renderRecent(loc);
   renderLongTerm(loc);
+}
+
+// Best forecast report card: its running record next to every single source on the same days.
+const fmtDate = date => new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(Date.parse(date));
+function renderBestTrack(loc) {
+  const el = $("accBest");
+  if (!el) return;
+  const locs = locsFor(loc), ids = SOURCES.map(s => s.id), days = acc.scores?.days || [];
+  const recs = [0, 1, 2].map(lead => bestRecord(days, { locs, lead, ids }));
+  const r = recs[0];
+  if (!r) { el.innerHTML = `<div class="panel"><p class="empty" style="margin:0">${days.length ? "The Best forecast hasn't been scored yet. Its first score appears the morning after its first full day." : emptyMsg()}</p></div>`; return; }
+  const g = rating(r.score), unit = locs.length > 1 ? "forecasts" : "days";
+  const vs = !r.top ? "" : Math.abs(r.margin) < 0.05 ? `Tied with the best single source, ${esc(srcShort(r.top.id))}`
+    : r.margin > 0 ? `${r.margin.toFixed(1)} points ahead of the best single source, ${esc(srcShort(r.top.id))} (${r.top.score.toFixed(1)})`
+    : `${(-r.margin).toFixed(1)} points behind the best single source, ${esc(srcShort(r.top.id))} (${r.top.score.toFixed(1)})`;
+  const tile = (big, label, sub = "") => `<div class="bt-tile"><div class="bt-big">${big}</div><div class="bt-lbl">${label}</div>${sub ? `<div class="bt-sub">${sub}</div>` : ""}</div>`;
+  el.innerHTML = `<div class="panel bt">
+    <div class="bt-top">
+      <div class="bt-score b-${g.key}"><span class="bt-num">${r.score.toFixed(1)}</span><span class="bt-word">${g.label}</span></div>
+      <div class="bt-head">
+        <div class="bt-rank">#${r.rank} of ${r.of} <span class="sub2">same-day forecasts${locs.length > 1 ? ", Vallejo + Napa" : ", " + esc(locName(loc))}</span></div>
+        <div class="bt-vs">${vs}</div>
+        <div class="sub2">${r.n} scored ${unit} since ${esc(fmtDate(r.since))}</div>
+      </div>
+    </div>
+    <div class="bt-tiles">
+      ${tile(`${r.beatAll}<small> of ${r.n}</small>`, `${unit} it beat every single source`)}
+      ${tile(`${r.beatAvg}<small> of ${r.nAvg}</small>`, `${unit} it beat the plain average`, isNum(r.avgScore) ? `Average scored ${r.avgScore.toFixed(1)}` : "")}
+      ${tile(`${A(r.hiMAE)}<small> / ${A(r.loMAE)}</small>`, "typical high / low miss")}
+      ${tile(`${Math.round(r.rainRight * 100)}%`, "rain calls right")}
+    </div>
+    <div class="legend" style="margin-top:14px"><span><span class="sw" style="background:var(--accent);height:4px"></span>Best forecast</span>${r.top ? `<span><span class="sw" style="background:var(--text-3)"></span>${esc(srcShort(r.top.id))} (best single source)</span>` : ""}<span><span class="sw dash2"></span>Plain average</span></div>
+    <div class="chart" id="btChart"></div>
+    <div class="bt-leads">${recs.map((x, L) => `<span>${LEAD_NAMES[L]} ${x ? `${scoreBadge(x.score)} <span class="sub2">#${x.rank} of ${x.of} · ${x.n} ${unit}</span>` : `<span class="miss">not scored yet</span>`}</span>`).join("")}</div>
+  </div>`;
+  scoreChart($("btChart"), r.series, r.top);
+}
+// Daily score lines (0–100) for the report card.
+function scoreChart(el, series, top) {
+  const W = Math.max(280, el.clientWidth || 600), H = W < 500 ? 170 : 200, m = { l: 30, r: 10, t: 10, b: 24 };
+  const vals = series.flatMap(p => [p.best, p.avg, p.top]).filter(isNum);
+  const lo = Math.max(0, Math.floor((Math.min(...vals) - 3) / 10) * 10), hi = 100;
+  const x = i => m.l + (series.length === 1 ? 0.5 : i / (series.length - 1)) * (W - m.l - m.r), y = v => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  const path = k => { let d = "", pen = false; series.forEach((p, i) => { if (isNum(p[k])) { d += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(p[k]).toFixed(1); pen = true; } else pen = false; }); return d; };
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Daily score of the Best forecast compared with the best single source and the plain average">`;
+  for (let v = lo; v <= hi; v += (hi - lo) > 40 ? 20 : 10) svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  const every = Math.ceil(series.length / (W < 500 ? 5 : 9));
+  series.forEach((p, i) => { if ((series.length - 1 - i) % every === 0) svg += `<text class="axis" x="${x(i)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === series.length - 1 ? "end" : "middle"}">${esc(fmtDate(p.date))}</text>`; });
+  svg += `<path d="${path("avg")}" fill="none" stroke="var(--text-3)" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+  if (top) svg += `<path d="${path("top")}" fill="none" stroke="var(--text-3)" stroke-width="1.5"/>`;
+  svg += `<path d="${path("best")}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (series.length <= 45) series.forEach((p, i) => { if (isNum(p.best)) svg += `<circle cx="${x(i).toFixed(1)}" cy="${y(p.best).toFixed(1)}" r="3.5" fill="var(--accent)"><title>${esc(fmtDate(p.date))}: Best ${p.best.toFixed(1)}${isNum(p.top) && top ? `, ${esc(srcShort(top.id))} ${p.top.toFixed(1)}` : ""}${isNum(p.avg) ? `, average ${p.avg.toFixed(1)}` : ""}</title></circle>`; });
+  el.innerHTML = svg + "</svg>";
 }
 
 function renderHealth() {

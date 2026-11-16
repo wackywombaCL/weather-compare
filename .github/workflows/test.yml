@@ -32,3 +32,5 @@ jobs:
         run: node tests/stadiums.test.mjs
       - name: Phone widget feed test
         run: node tests/widget.test.mjs
+      - name: Best forecast track record test
+        run: node tests/best-record.test.mjs
