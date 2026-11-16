@@ -49,3 +49,22 @@ console.log("best-record: 3 checks passed");
   assert.equal(dry.wetDates, null); assert.equal(dry.skill.rain.a.n, 14);
   console.log("best-record: rain memory check passed");
 }
+
+// Rain amount in the score, and the "usually within" range.
+import { amountScore, dayScore, bestTypical } from "../src/skill.js";
+{
+  const s = (qpf, obs, extra = {}) => ({ ok: true, hiErr: 0, loErr: 0, mae: 0, brier: 0, rain: "hit", qpf, qpfErr: Math.round((qpf - obs) * 100) / 100, ...extra });
+  assert.equal(amountScore(s(0, 0)), null);                       // dry day, nothing forecast: not counted
+  assert.equal(amountScore({ ok: true, qpf: null, qpfErr: null }), null);
+  assert.equal(Math.round(amountScore(s(0.1, 1))), 10);           // far too little
+  assert.equal(Math.round(amountScore(s(1, 1))), 100);
+  assert.equal(Math.round(amountScore(s(0.02, 0))), 80);          // a trace on a dry day costs little
+  assert.equal(dayScore(s(0, 0)), 100);                           // perfect temps + right call, no rain in play
+  assert.equal(Math.round(dayScore(s(0.1, 1)) * 10) / 10, 70 + 30 * (0.6 + 0.4 * 0.1));
+  const mk = (errs, method) => errs.map((e, i) => ({ date: `2026-11-${10 + i}`, loc: "vallejo", lead: 0, src: { best: { ok: true, hiErr: e, loErr: -e / 2, ...(method ? { method } : {}) } } }));
+  assert.equal(bestTypical(mk([5, 5, 5, 5], null), { locs: ["vallejo"] }), null);       // old-method days don't count
+  assert.equal(bestTypical(mk([1, 2], 2), { locs: ["vallejo"] }), null);               // needs 3 days
+  const ty = bestTypical(mk([1, -2, 3, -4, 0], 2), { locs: ["vallejo"] });
+  assert.equal(ty.hi, 3); assert.equal(ty.lo, 1.5); assert.equal(ty.n, 5);
+  console.log("best-record: rain amount score and typical-miss checks passed");
+}

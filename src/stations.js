@@ -1,15 +1,21 @@
 // Observation stations used to check forecasts and to read "right now" for the Best forecast.
-// Vallejo has no official station, so it uses three nearby bay-side personal stations (CWOP,
-// through the National Weather Service feed); Napa uses Napa County Airport.
+// Vallejo has no official station, so its temperatures, wind and humidity are an average of a
+// utility weather station in north Vallejo (PG&E) and three nearby bay-side personal stations
+// (CWOP), all through the National Weather Service feed; Napa uses Napa County Airport.
+// None of those four measure rain. In this feed only airports do, so Vallejo's rain total is
+// a blend of the two nearest airport gauges: Napa (north) and Concord (southeast).
 import { getJSON, isNum, cToF } from "./sources.js";
 
 export const LOCAL_STATIONS = {
   vallejo: [
+    { id: "363PG", name: "North Vallejo", lat: 38.167, lon: -122.254 },
     { id: "C0879", name: "Hercules", lat: 38.029, lon: -122.276 },
     { id: "G7397", name: "Benicia", lat: 38.081, lon: -122.148 },
     { id: "C6944", name: "Cordelia", lat: 38.172, lon: -122.129 },
   ],
 };
+// Extra rain gauges blended with the main rain station, weighted by closeness.
+export const RAIN_EXTRA = { vallejo: [{ id: "KCCR", name: "Concord airport", lat: 37.992, lon: -122.052 }] };
 export const NOW_STATIONS = {
   vallejo: LOCAL_STATIONS.vallejo,
   napa: [{ id: "KAPC", name: "Napa County Airport", lat: 38.213, lon: -122.28 }],

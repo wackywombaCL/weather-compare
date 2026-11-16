@@ -3,14 +3,26 @@ import { isNum, mean } from "./sources.js";
 
 const clamp = v => Math.max(0, Math.min(100, v));
 
-// 0–100 score for one source on one day: 70% temperature, 30% rain.
+// How close a rain total was, 0–100, on days rain was in play (it rained or the source expected
+// some); null otherwise or when the source gives no amounts. The miss is measured against the
+// larger of the two totals (at least 0.10"), so 0.1" forecast for 1" of rain scores 10 and
+// 0.02" forecast on a dry day scores 80.
+export function amountScore(s) {
+  if (!isNum(s?.qpf) || !isNum(s.qpfErr)) return null;
+  const obs = Math.max(0, s.qpf - s.qpfErr);
+  if (obs < 0.01 && s.qpf < 0.01) return null;
+  return clamp(100 * (1 - Math.abs(s.qpfErr) / Math.max(obs, s.qpf, 0.1)));
+}
+// 0–100 score for one source on one day: 70% temperature, 30% rain. The rain part is the
+// rain/no-rain call; on days rain was in play, 40% of it is how close the rain total was.
 export function dayScore(s) {
   if (!s?.ok) return null;
   const tm = mean([isNum(s.hiErr) ? Math.abs(s.hiErr) : null, isNum(s.loErr) ? Math.abs(s.loErr) : null, s.mae]);
   if (!isNum(tm)) return null;
   const temp = clamp(100 - 10 * tm);
-  const rain = isNum(s.brier) ? 100 * (1 - s.brier) : (s.rain === "hit" || s.rain === "none") ? 100 : 0;
-  return 0.7 * temp + 0.3 * rain;
+  const call = isNum(s.brier) ? 100 * (1 - s.brier) : (s.rain === "hit" || s.rain === "none") ? 100 : 0;
+  const amt = amountScore(s);
+  return 0.7 * temp + 0.3 * (isNum(amt) ? 0.6 * call + 0.4 * amt : call);
 }
 
 // Average score per source over the most recent `n` scored days (optionally one location / lead).
@@ -150,4 +162,17 @@ export function bestRecord(days, { locs = null, lead = 0, ids = null } = {}) {
     rainRight: rows.filter(d => d.src.best.rain === "hit" || d.src.best.rain === "none").length / rows.length,
     series: dates.map(date => ({ date, best: mean(byDate[date].best), avg: mean(byDate[date].avg), top: top ? mean(byDate[date].src[top.id] || []) : null })),
   };
+}
+
+// How far off the Best forecast's highs and lows usually are: the miss it stayed within on 3 days
+// out of 4, over its last 14 scored days made the current way (method 2: bias-corrected).
+// Null until there are a few such days.
+export const BEST_METHOD = 2;
+export function bestTypical(days, { locs = null, lead = 0, n = 14, min = 3 } = {}) {
+  const rows = (days || []).filter(d => (d.lead ?? 0) === lead && !d.partial && (!locs || locs.includes(d.loc)) && d.src?.best?.ok && (d.src.best.method ?? 1) >= BEST_METHOD);
+  const dates = [...new Set(rows.map(d => d.date))].sort().slice(-n);
+  const use = rows.filter(d => dates.includes(d.date));
+  if (dates.length < min) return null;
+  const p75 = k => { const v = use.map(d => d.src.best[k]).filter(isNum).map(Math.abs).sort((a, b) => a - b); if (!v.length) return null; const i = 0.75 * (v.length - 1), lo = Math.floor(i); return v[lo] + (v[Math.min(v.length - 1, lo + 1)] - v[lo]) * (i - lo); };
+  return { hi: p75("hiErr"), lo: p75("loErr"), n: dates.length };
 }

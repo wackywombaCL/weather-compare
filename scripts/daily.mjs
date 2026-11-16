@@ -18,10 +18,10 @@ import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { SOURCES, PRESETS, isRainyHour, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, mode, cToF } from "../src/sources.js";
-import { recentScores, smartWeights, PSEUDO_NAMES, elementSkill, elementWeights, BEST_MIN_DAYS, bestRecord, rating } from "../src/skill.js";
+import { recentScores, smartWeights, PSEUDO_NAMES, elementSkill, elementWeights, BEST_MIN_DAYS, bestRecord, rating, BEST_METHOD } from "../src/skill.js";
 import { trimHistory } from "./trim.mjs";
 import { computeBias, biasFor, nudge, BIAS_DAYS } from "../src/best.js";
-import { LOCAL_STATIONS, robustMean, fetchObsNow } from "../src/stations.js";
+import { LOCAL_STATIONS, RAIN_EXTRA, robustMean, fetchObsNow } from "../src/stations.js";
 
 export const TZ = "America/Los_Angeles";
 export const SET_HOUR = 6;
@@ -183,8 +183,8 @@ function buildBest(Lc, okIds, leads, scores, locId, obsNow = null) {
   const full = new Set(scores.days.filter(d => d.loc === locId && (d.lead ?? 0) === 0 && !d.partial).map(d => d.date));
   if (full.size < BEST_MIN_DAYS) return null;
   const sk0 = elementSkill(scores.days, { locs: [locId], lead: 0, n: 14 }).skill;
-  const entry = { ok: true, leads: {}, from: {} };
   const B = biasFor(scores.bias, locId);
+  const entry = { ok: true, leads: {}, from: {}, ...(B.any ? { method: BEST_METHOD } : {}) };
   for (const L of LEADS) {
     const skL = elementSkill(scores.days, { locs: [locId], lead: L, n: 14 }).skill;
     const W = el => elementWeights(skL, el, okIds) || elementWeights(sk0, el, okIds);
@@ -374,6 +374,19 @@ export async function getObservations(loc, win) {
   const base = await fetchObservations(loc, win);
   if (!base) return null;
   const baseOb = summarizeObs(base.obs, win);
+  // Rain total: the main gauge blended with any extra gauges, each weighted by 1 / distance.
+  // Rain yes/no and start time stay with the main (closest) gauge.
+  let rainIds = [base.station.id];
+  if (RAIN_EXTRA[loc.id] && isNum(baseOb.precipIn) && isNum(base.station.mi) && base.station.mi > 0) {
+    const g = [{ w: 1 / base.station.mi, v: baseOb.precipIn }];
+    for (const st of RAIN_EXTRA[loc.id]) {
+      try {
+        const o = summarizeObs(await stationObs(st.id, win), win);
+        if (isNum(o.precipIn) && o.n >= 12) { g.push({ w: 1 / miles([loc.lat, loc.lon], [st.lat, st.lon]), v: o.precipIn }); rainIds.push(st.id); }
+      } catch {}
+    }
+    if (g.length > 1) baseOb.precipIn = Math.round(g.reduce((s, x) => s + x.w * x.v, 0) / g.reduce((s, x) => s + x.w, 0) * 100) / 100;
+  }
   const locals = LOCAL_STATIONS[loc.id];
   if (!locals) return { station: base.station, ob: baseOb };
   const parts = [];
@@ -394,10 +407,10 @@ export async function getObservations(loc, win) {
     wind: per("wind", ROBUST.wind),
     hum: per("hum", ROBUST.hum),
     parts: Object.fromEntries(parts.map(p => [p.st.id, { hi: p.ob.hi, lo: p.ob.lo }])),
-    rainStation: base.station.id,
+    rainStation: rainIds.join("+"),
   };
   const mi = r1(mean(parts.map(p => miles([loc.lat, loc.lon], [p.st.lat, p.st.lon]))));
-  return { station: { id: parts.map(p => p.st.id).join("+"), name: `${parts.map(p => p.st.name).join(", ")} average; rain from ${base.station.id}`, mi }, ob };
+  return { station: { id: parts.map(p => p.st.id).join("+"), name: `${parts.map(p => p.st.name).join(", ")} average; rain from ${rainIds.join(" + ")}`, mi }, ob };
 }
 
 // ---------- 3. Alerts ----------
@@ -516,7 +529,7 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
         }
         const ob = got.ob;
         const src = {};
-        for (const [id, fc] of Object.entries(Lc.sources)) if (fc.ok && fc.leads?.[L]) src[id] = scoreSource(fc.leads[L], ob, win);
+        for (const [id, fc] of Object.entries(Lc.sources)) if (fc.ok && fc.leads?.[L]) src[id] = { ...scoreSource(fc.leads[L], ob, win), ...(fc.method ? { method: fc.method } : {}) };
         scores.days.push({ date: lead.date, setDate: snap.date, lead: L, loc: loc.id, station: got.station.id, stationName: got.station.name || null, stationMi: got.station.mi,
           partial, windowStart: win.start, windowEnd: win.end, setAt: snap.setAt, obs: ob, src });
         log(`  ${got.station.id}: obs ${ob.hi}/${ob.lo}, rain ${ob.rained ? "yes" : "no"} | ` +

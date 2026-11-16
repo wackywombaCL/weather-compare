@@ -1,6 +1,6 @@
 import { PROXY_URL } from "./config.js";
 import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, setProxy, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
-import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS, bestRecord } from "./skill.js";
+import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS, bestRecord, bestTypical } from "./skill.js";
 import { initAccuracy, renderAccuracy, accData } from "./accuracy.js";
 import { weightsBy, biasFor, bestHours, nudge } from "./best.js";
 import { NOW_STATIONS, fetchObsNow } from "./stations.js";
@@ -361,6 +361,12 @@ function renderBest() {
     return { d, i, hi, lo, pop, qpf, rain, wind, humMin, humMax, spread, conf, cat };
   });
   const t = dayInfo[0];
+  // "Usually within X°": the miss the Best forecast's highs stayed inside on 3 days out of 4 at
+  // each range (same day, 1 and 2+ days ahead). Replaces the agreement label once there's a record.
+  const typ = [0, 1, 2].map(L => bestTypical(days, { locs, lead: L }));
+  const within = i => { const y = typ[Math.min(i, 2)]; return y && isNum(y.hi) ? { y, txt: A(Math.max(0.5, Math.round(y.hi * 2) / 2)).replace(".0", "") } : null; };
+  const withinTitle = (w, x) => `On 3 days out of 4, the high has been within ${w.txt} at this range (last ${w.y.n} scored days${isNum(w.y.lo) ? `; lows within ${A(Math.max(0.5, Math.round(w.y.lo * 2) / 2)).replace(".0", "")}` : ""}).${x.conf ? ` Sources agree: ${x.conf.toLowerCase()} (±${A(x.spread)}).` : ""}`;
+  const sure = (x, long) => { const w = within(x.i); return w ? `<span class="conf" title="${esc(withinTitle(w, x))}">${long ? `high usually within ${w.txt}` : "±" + w.txt}</span>` : x.conf ? `<span class="conf conf-${x.conf.toLowerCase()}" title="How closely the most accurate sources agree on the high (±${A(x.spread)})">${x.conf}${long ? " confidence" : ""}</span>` : ""; };
   // "Now" is what the stations read when there's a fresh reading; otherwise the blend for this hour.
   const cur = obs ? obs.temp : wmean(ok.map(s => [s.id, state.results[s.id].data.current.temp]), W(0, "temp")) ?? hr.rows[0]?.temp;
   const nowTitle = obs ? `Measured at ${obs.names.join(", ")} ${ago(obs.at)}` : "Right now, as the sources report it";
@@ -377,7 +383,7 @@ function renderBest() {
       <div class="best-main">
         <div class="best-kicker">Best forecast · today${trackedLocs() ? "" : " · tuned on Vallejo + Napa"}</div>
         <div class="best-temps"><span class="i" aria-hidden="true">${icon(t.cat, night && isNum(cur))}</span>${isNum(cur) ? `<span class="hi" title="${esc(nowTitle)}">${T(cur)}</span><span class="hl"><span title="Today's high">↑ ${T(t.hi)}</span><span title="Today's low">↓ ${T(t.lo)}</span></span>` : `<span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span>`}</div>
-        <div class="cond">${esc(catLabel(t.cat, false))}${isNum(cur) ? " today" : ""}${t.conf ? ` · <span class="conf conf-${t.conf.toLowerCase()}" title="How closely the most accurate sources agree on the high (±${A(t.spread)})">${t.conf} confidence</span>` : ""}</div>
+        <div class="cond">${esc(catLabel(t.cat, false))}${isNum(cur) ? " today" : ""}${sure(t, true) ? " · " + sure(t, true) : ""}</div>
       </div>
       <div class="best-pills">
         ${pill(`💧 ${P(t.pop)} chance of rain`, "Rain chance, weighted toward the sources best at rain chances lately")}
@@ -395,13 +401,13 @@ function renderBest() {
         <div class="bh-p">${isNum(r.pop) && r.pop >= 20 ? "💧" + Math.round(r.pop) + "%" : "&nbsp;"}</div>
       </div>`).join("")}</div>
     <div class="best-days">${dayInfo.slice(1).map(x => `
-      <div class="bday" title="${x.conf ? x.conf + " confidence" : ""}">
+      <div class="bday">
         <div class="dn">${esc(fmtDay(x.d.ms, tz))}</div>
         <div class="di" aria-hidden="true">${icon(x.cat, false)}</div>
         <div class="hl">${T(x.hi)} <span class="lo">${T(x.lo)}</span></div>
         <div class="pp">💧 ${P(x.pop)}${wetAmt(x.qpf) ? ` · ☔ ${R(x.qpf)}` : ""}</div>
         ${x.rain ? `<div class="rs">🌧️ ~${esc(fmtTime(x.rain.t, tz))}</div>` : ""}
-        ${x.conf ? `<div class="conf conf-${x.conf.toLowerCase()}">${x.conf}</div>` : ""}
+        ${sure(x, false)}
       </div>`).join("")}</div>
     <div class="best-foot">
       ${rec ? `<a class="best-track" href="#accuracy" title="See the Best forecast report card">Track record: <b>${rec.score.toFixed(1)}</b> average score over ${rec.n} scored ${locs.length > 1 ? "forecasts" : "days"} · #${rec.rank} of ${rec.of} ›</a>` : ""}
