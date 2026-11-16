@@ -51,7 +51,7 @@ export async function getJSON(url, { signal, tries = 2, headers } = {}) {
     } catch (e) {
       lastErr = e;
       if (e.name === "AbortError" || (e.status && e.status < 500)) break;
-      await new Promise(res => setTimeout(res, 800));
+      if (i < tries - 1) await new Promise(res => setTimeout(res, 800 * (i + 1) ** 2));   // 0.8s, 3.2s, 7.2s
     }
   }
   throw lastErr;
@@ -232,7 +232,7 @@ function fetchModelsOnce(loc, signal, group = MODELS) {
     temperature_unit: "fahrenheit", wind_speed_unit: "mph", precipitation_unit: "inch",
     timezone: loc.tz || "auto", timeformat: "unixtime", forecast_days: "7",
   });
-  const p = getJSON("https://api.open-meteo.com/v1/forecast?" + q, { signal });
+  const p = getJSON("https://api.open-meteo.com/v1/forecast?" + q, { signal, tries: 4 });   // one request feeds several sources
   modelFetches.set(key, { at: Date.now(), p });
   p.catch(() => modelFetches.delete(key));
   return p;

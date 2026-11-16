@@ -111,6 +111,45 @@ function blend(entries, weights) {
 }
 
 // ---------- 1. SET ----------
+// One source's saved forecast: a summary and the packed hours for each window it covers.
+// `from0` (repairs only) is when a late-fetched forecast starts covering today's window.
+function sourceEntry(s, d, leads, from0 = null) {
+  const entry = { ok: true, leads: {} };
+  for (const L of LEADS) {
+    const { coverStart, windowEnd: end, date } = leads[L];
+    if (s.maxLead != null && L > s.maxLead) continue;   // short-range model: same day only
+    if (L === 0 && from0 != null && from0 - coverStart > REPAIR_MAX_LATE) continue;   // too late to count for today
+    const from = L === 0 && from0 != null ? Math.max(coverStart, from0) : coverStart;
+    const hours = d.hourly.filter(h => h.t >= from && h.t < end);
+    if (hours.length < (s.maxLead != null ? 20 : 6)) continue;   // doesn't forecast that far out hour by hour
+    entry.leads[L] = { ...summarize(hours), dayPop: d.daily[date]?.pop ?? null, ...pack(hours, coverStart, end) };
+  }
+  return entry;
+}
+// Later runs the same morning retry any source that failed when the forecast was set (services
+// have bad minutes). Tomorrow's and the day after's windows are saved in full; today's only if
+// the retry comes within two hours of the original, so a late forecast can't look better than it was.
+const REPAIR_MAX_LATE = 2 * 3600e3;
+export async function repairForecast(snap, now, log) {
+  if (snap.v !== 2) return [];
+  const fixed = [];
+  for (const loc of LOCATIONS) {
+    const Lc = snap.locations?.[loc.id];
+    if (!Lc) continue;
+    await Promise.all(SOURCES.map(async s => {
+      if (Lc.sources[s.id]?.ok !== false || (s.key && !process.env[s.key.env])) return;
+      try {
+        const entry = sourceEntry(s, await s.fetch(loc), snap.leads, Math.floor(now / 3600e3) * 3600e3);
+        if (!Object.keys(entry.leads).length) return;
+        Lc.sources[s.id] = { ...entry, repaired: now };
+        fixed.push({ source: s.id, loc: loc.id, leads: Object.keys(entry.leads) });
+        log(`  ${loc.id}/${s.id}: recovered (${Object.keys(entry.leads).map(L => ["today", "tomorrow", "day after"][L]).join(", ")})`);
+      } catch (e) { log(`  ${loc.id}/${s.id}: still failing (${e.message})`); }
+    }));
+  }
+  return fixed;
+}
+
 export async function setForecast(dateKey, now, log, scores) {
   const leads = {};
   for (const L of LEADS) {
@@ -124,15 +163,7 @@ export async function setForecast(dateKey, now, log, scores) {
     await Promise.all(SOURCES.map(async s => {
       if (s.key && !process.env[s.key.env]) return; // no key saved yet: not tracked
       try {
-        const d = await s.fetch(loc);
-        const entry = { ok: true, leads: {} };
-        for (const L of LEADS) {
-          const { coverStart: from, windowEnd: end, date } = leads[L];
-          if (s.maxLead != null && L > s.maxLead) continue;   // short-range model: same day only
-          const hours = d.hourly.filter(h => h.t >= from && h.t < end);
-          if (hours.length < (s.maxLead != null ? 20 : 6)) continue;   // doesn't forecast that far out hour by hour
-          entry.leads[L] = { ...summarize(hours), dayPop: d.daily[date]?.pop ?? null, ...pack(hours, from, end) };
-        }
+        const entry = sourceEntry(s, await s.fetch(loc), leads);
         if (!entry.leads[0]) throw new Error("no hourly data for today");
         Lc.sources[s.id] = entry;
       } catch (e) {
@@ -479,8 +510,21 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
   const snapFile = path.join(dataDir, "forecasts", `${today}.json`);
   const have = await readJSON(snapFile, null);
   let setNow = false;
-  if (have) log(`Forecast for ${today} already set.`);
-  else if (force || (hr >= SET_HOUR && hr < SET_HOUR + 4)) {
+  if (have) {
+    log(`Forecast for ${today} already set.`);
+    if (hr >= SET_HOUR && hr < SET_HOUR + 4 && Object.values(have.locations || {}).some(L => Object.values(L.sources).some(x => x.ok === false))) {
+      log("Retrying sources that failed earlier…");
+      const fixed = await repairForecast(have, now, log);
+      if (fixed.length) {
+        await writeJSON(snapFile, have);
+        setNow = true;
+        for (const s of SOURCES) {
+          const results = LOCATIONS.map(l => have.locations[l.id]?.sources[s.id]).filter(Boolean);
+          if (results.length && !results.some(x => !x.ok)) status.sources[s.id] = { ...(status.sources[s.id] || {}), tracked: true, ok: true, error: null, lastOk: today };
+        }
+      }
+    }
+  } else if (force || (hr >= SET_HOUR && hr < SET_HOUR + 4)) {
     log(`Setting forecast for ${today}…`);
     const { snap, problems: p } = await setForecast(today, now, log, scores);
     await writeJSON(snapFile, snap);
