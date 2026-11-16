@@ -283,7 +283,7 @@ function renderAverage() {
   const label = state.avgMode === "smart" && smartReady ? "Smart average" : "Average";
   const ser = [{ name: label, color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: [lo.map(cvt), hi.map(cvt)], extra: i => `<div class="row"><span>Range</span><span>${T(lo[i])} – ${T(hi[i])}</span></div>` }];
   $("avgLegend").innerHTML = `<span><span class="sw" style="background:var(--avg)"></span>${label}</span>` + (ok.length > 1 ? `<span><span class="sw band"></span>Lowest–highest source</span>` : "") + `<span><span class="sw bar"></span>Rain chance</span>`;
-  lineChart($("avgChart"), grid, ser, { tz, bars: pop, amounts: qpfs });
+  lineChart($("avgChart"), grid, ser, { tz, bars: pop, amounts: qpfs, peaks: true });
 }
 
 // ---------- Best forecast: each element from the sources that have been best at it lately ----------
@@ -393,12 +393,13 @@ function renderBest() {
         ${isNum(t.humMin) ? pill(`Humidity ${Math.round(t.humMin)}–${Math.round(t.humMax)}%`, "Lowest to highest humidity for the rest of today, weighted toward the sources best at humidity") : ""}
       </div>
     </div>
-    <div class="best-hours" role="list" aria-label="Best forecast, next 24 hours">${strip.map((r, k) => `
-      <div class="bhour" role="listitem">
+    <div class="best-hours${strip.some(r => rainLevel(r.qpf)) ? " has-rain" : ""}" role="list" aria-label="Best forecast, next 24 hours">${strip.map((r, k) => `
+      <div class="bhour${rainLevel(r.qpf) ? " wet" + rainLevel(r.qpf) : ""}" role="listitem" title="${esc(rainLevel(r.qpf) ? `${RAIN_WORD[rainLevel(r.qpf)]} rain, about ${R(r.qpf)} this hour` : "")}">
         <div class="bh-t">${k === 0 ? "Now" : esc(fmtHour(r.t, tz))}</div>
         <div class="bh-i" aria-hidden="true">${icon(r.cat, isNightHour(r.t, tz))}</div>
         <div class="bh-v">${T(k === 0 ? cur : r.temp)}</div>
         <div class="bh-p">${isNum(r.pop) && r.pop >= 20 ? "💧" + Math.round(r.pop) + "%" : "&nbsp;"}</div>
+        <div class="bh-q">${rainLevel(r.qpf) ? `${R(r.qpf, false)}${state.units === "F" ? "″" : " mm"}<span class="bh-l">${RAIN_WORD[rainLevel(r.qpf)]}</span><i class="bh-bar"></i>` : "&nbsp;"}</div>
       </div>`).join("")}</div>
     <div class="best-days">${dayInfo.slice(1).map(x => `
       <div class="bday">
@@ -420,6 +421,11 @@ function renderBest() {
       </details>
     </div>`;
 }
+// Rain rate for one hour: 1 light (under 0.10 in), 2 moderate (0.10–0.30), 3 heavy (over 0.30); 0 none.
+const rainLevel = q => !isNum(q) || q < 0.01 ? 0 : q < 0.1 ? 1 : q <= 0.3 ? 2 : 3;
+const RAIN_WORD = ["", "Light", "Moderate", "Heavy"];
+// Colour for a temperature (°F): blue when cold through green to red when hot.
+const tempHue = f => Math.round(Math.max(0, Math.min(240, 240 - (f - 30) * 240 / 70)));
 const isNightHour = (t, tz) => { const h = localHour(t, tz); return h < 7 || h >= 18; };
 const W_ = mph => !isNum(mph) ? "—" : state.units === "F" ? Math.round(mph) + " mph" : Math.round(mph * 1.609) + " km/h";
 
@@ -504,7 +510,7 @@ function renderHourly() {
       : [{ name: avgName, color: "var(--avg)", width: 2.5, values: avg.map(cvt), band: ok.length > 1 ? [lo.map(cvt), hi.map(cvt)] : null }];
     if (best) { best.forEach((r, i) => { if (r) { pop[i] = r.pop; qpf[i] = r.qpf; } }); }
     for (const id of state.sel) if (maps[id]) ser.push({ name: srcShort(id), color: selColor(id), values: grid.map(t => cvt(maps[id].get(t)?.temp)), pops: grid.map(t => maps[id].get(t)?.pop) });
-    lineChart($("hourChart"), grid, ser, { tz, bars: pop, amounts: qpf, directLabels: ser.length > (best ? 2 : 1), extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span class="tipp">💧${Math.round(x.pops[i])}%</span>` : "" });
+    lineChart($("hourChart"), grid, ser, { tz, bars: pop, amounts: qpf, peaks: true, directLabels: ser.length > (best ? 2 : 1), extra: (x, i) => x.pops && isNum(x.pops[i]) ? ` <span class="tipp">💧${Math.round(x.pops[i])}%</span>` : "" });
   } else $("hourChart").innerHTML = "";
 
   // Table: best sources first; icons only when conditions change; rain chance only when 20%+.
@@ -530,7 +536,7 @@ function renderHourly() {
       const showIcon = key !== lastCat || i === 0; lastCat = key;
       const wet = isNum(h.pop) && h.pop >= 20;
       const amt = isNum(h.qpf) && h.qpf >= 0.01;
-      return `<td class="cell ${newDay[i] ? "newday" : ""}${isRainyHour(h) ? " wet" : ""}" title="${esc(h.text || catLabel(h.cat))}${isNum(h.pop) ? ` · ${Math.round(h.pop)}% rain` : ""}${isNum(h.qpf) ? ` · ${R(h.qpf)}` : ""}"><span class="ci" aria-hidden="true">${showIcon ? icon(h.cat, h.night) : ""}</span><span class="ct">${T(h.temp)}</span><span class="cp">${wet ? Math.round(h.pop) + "%" : ""}</span><span class="cq">${amt ? R(h.qpf, false) : ""}</span></td>`;
+      return `<td class="cell heat ${newDay[i] ? "newday" : ""}${isRainyHour(h) ? " wet" : ""}" style="--hue:${tempHue(h.temp)}" title="${esc(h.text || catLabel(h.cat))}${isNum(h.pop) ? ` · ${Math.round(h.pop)}% rain` : ""}${isNum(h.qpf) ? ` · ${R(h.qpf)}` : ""}"><span class="ci" aria-hidden="true">${showIcon ? icon(h.cat, h.night) : ""}</span><span class="ct">${T(h.temp)}</span><span class="cp">${wet ? Math.round(h.pop) + "%" : ""}</span><span class="cq">${amt ? R(h.qpf, false) : ""}</span></td>`;
     }).join("");
   };
   let body = "";
@@ -582,7 +588,9 @@ export function lineChart(el, times, series, opts = {}) {
   if (hi - lo < step * 2) hi = lo + step * 2;
   const x = i => m.l + (times.length === 1 ? 0 : i / (times.length - 1)) * iw;
   const y = v => m.t + (1 - (v - lo) / (hi - lo)) * ih;
-  const path = vals => { let d = "", pen = false; vals.forEach((v, i) => { if (isNum(v)) { d += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); pen = true; } else pen = false; }); return d; };
+  // Smooth curve through each unbroken run of points (monotone, so it never overshoots a value).
+  const runs = vals => { const out = []; let cur = null; vals.forEach((v, i) => { if (isNum(v)) (cur ||= (out.push([]), out[out.length - 1])).push([x(i), y(v)]); else cur = null; }); return out; };
+  const path = vals => runs(vals).map(r => smoothPath(r)).join("");
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Hourly temperature chart">`;
   for (let v = lo; v <= hi; v += step) svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}°</text>`;
   const tz = opts.tz;
@@ -603,7 +611,7 @@ export function lineChart(el, times, series, opts = {}) {
     opts.bars.forEach((p, i) => {
       if (!isNum(p) || p < 1) return;
       const h = Math.max(1.5, p / 100 * barH);
-      svg += `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${(by + barH - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="var(--rain)" opacity="${(0.35 + 0.65 * p / 100).toFixed(2)}"/>`;
+      svg += `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${(by + barH - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(3, bw / 2).toFixed(1)}" fill="var(--rain)" opacity="${(0.35 + 0.65 * p / 100).toFixed(2)}"/>`;
     });
   }
   for (const mk of opts.markers || []) {
@@ -616,9 +624,22 @@ export function lineChart(el, times, series, opts = {}) {
   for (const s of series) if (s.band) {
     const [bl, bh] = s.band;
     const idx = bl.map((v, i) => i).filter(i => isNum(bl[i]) && isNum(bh[i]));
-    if (idx.length) svg += `<path d="${idx.map((i, k) => (k ? "L" : "M") + x(i) + "," + y(bh[i])).join("") + idx.slice().reverse().map(i => "L" + x(i) + "," + y(bl[i])).join("")}Z" fill="var(--band)"/>`;
+    if (idx.length) svg += `<path d="${smoothPath(idx.map(i => [x(i), y(bh[i])])) + "L" + smoothPath(idx.slice().reverse().map(i => [x(i), y(bl[i])])).slice(1)}Z" fill="var(--band)"/>`;
   }
+  // Soft fill under a series that asks for it.
+  series.forEach((s, k) => { if (!s.fill) return; const id = `g${(el.id || "c")}${k}`; svg += `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${s.color}" stop-opacity=".26"/><stop offset="1" stop-color="${s.color}" stop-opacity="0"/></linearGradient></defs>`;
+    for (const r of runs(s.values)) if (r.length > 1) svg += `<path d="${smoothPath(r)}L${r[r.length - 1][0].toFixed(1)},${m.t + ih}L${r[0][0].toFixed(1)},${m.t + ih}Z" fill="url(#${id})"/>`; });
   for (const s of series) svg += `<path d="${path(s.values)}" fill="none" stroke="${s.color}" stroke-width="${s.width || 2}" stroke-linejoin="round" stroke-linecap="round"${s.dash ? ` stroke-dasharray="${s.dash === true ? "5 4" : s.dash}"` : ""}/>`;
+  // Mark the warmest and coolest points of the main line, and where "now" is.
+  if (opts.peaks && series[0]) {
+    const v = series[0].values, ok = v.map((q, i) => i).filter(i => isNum(v[i]));
+    if (ok.length > 8) {
+      const hiI = ok.reduce((a, i) => v[i] > v[a] ? i : a, ok[0]), loI = ok.reduce((a, i) => v[i] < v[a] ? i : a, ok[0]);
+      const lab = (i, up) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v[i]).toFixed(1)}" r="3.5" fill="${series[0].color}" stroke="var(--surface)" stroke-width="1.5"/><text class="pk" x="${Math.max(m.l + 12, Math.min(W - m.r - 12, x(i))).toFixed(1)}" y="${(y(v[i]) + (up ? -9 : 17)).toFixed(1)}" text-anchor="middle">${Math.round(v[i])}°</text>`;
+      if (v[hiI] - v[loI] >= 3) svg += lab(hiI, true) + lab(loI, false);
+      if (hiI !== ok[0] && loI !== ok[0]) svg += `<circle cx="${x(ok[0]).toFixed(1)}" cy="${y(v[ok[0]]).toFixed(1)}" r="4.5" fill="var(--surface)" stroke="${series[0].color}" stroke-width="2.5"/>`;
+    }
+  }
   if (opts.directLabels && m.r > 20) {
     const ends = series.map(s => { let i = s.values.length - 1; while (i >= 0 && !isNum(s.values[i])) i--; return i >= 0 ? { s, yy: y(s.values[i]), i } : null; }).filter(Boolean).sort((a, b) => a.yy - b.yy);
     for (let k = 1; k < ends.length; k++) if (ends[k].yy - ends[k - 1].yy < 13) ends[k].yy = ends[k - 1].yy + 13;
@@ -648,6 +669,19 @@ export function lineChart(el, times, series, opts = {}) {
   hit.addEventListener("pointermove", show);
   hit.addEventListener("pointerdown", show);
   hit.addEventListener("pointerleave", hide);
+}
+// "M x,y C …" through the points with a monotone cubic curve (straight for 1–2 points).
+function smoothPath(p) {
+  const f = v => v.toFixed(1), n = p.length;
+  if (!n) return "";
+  if (n < 3) return p.map((q, i) => (i ? "L" : "M") + f(q[0]) + "," + f(q[1])).join("");
+  const s = [], t = [];
+  for (let i = 0; i < n - 1; i++) s.push((p[i + 1][1] - p[i][1]) / ((p[i + 1][0] - p[i][0]) || 1));
+  t[0] = s[0]; t[n - 1] = s[n - 2];
+  for (let i = 1; i < n - 1; i++) t[i] = s[i - 1] * s[i] <= 0 ? 0 : 2 * s[i - 1] * s[i] / (s[i - 1] + s[i]);
+  let d = "M" + f(p[0][0]) + "," + f(p[0][1]);
+  for (let i = 0; i < n - 1; i++) { const dx = (p[i + 1][0] - p[i][0]) / 3; d += `C${f(p[i][0] + dx)},${f(p[i][1] + t[i] * dx)} ${f(p[i + 1][0] - dx)},${f(p[i + 1][1] - t[i + 1] * dx)} ${f(p[i + 1][0])},${f(p[i + 1][1])}`; }
+  return d;
 }
 let rsz;
 window.addEventListener("resize", () => {

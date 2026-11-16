@@ -86,6 +86,8 @@ function aggregate(days, id) {
   };
 }
 const scoreBadge = v => { const g = rating(v); return g ? `<span class="badge b-${g.key}" title="${g.label}"><i></i>${Math.round(v)}</span>` : `<span class="miss">—</span>`; };
+// A bar for a 0–100 score (drawn from 50 up, where the differences are), coloured by its rating.
+const scoreBar = v => { const g = rating(v); return g ? `<span class="sbar b-${g.key}" aria-hidden="true"><i style="width:${Math.max(3, Math.min(100, (v - 50) * 2)).toFixed(0)}%"></i></span>` : ""; };
 const timingText = h => !isNum(h) ? "" : Math.abs(h) < 0.5 ? "on time" : `${Math.abs(h).toFixed(Math.abs(h) < 10 ? 1 : 0).replace(/\.0$/, "")}h ${h > 0 ? "late" : "early"}`;
 const isPseudo = id => PSEUDO.has(id);
 const nameCell = id => `<th class="${isPseudo(id) ? "blend" : ""}">${isSelected(id) ? `<span class="sw" style="background:${selColor(id)}"></span>` : ""}${esc(srcShort(id))}</th>`;
@@ -282,7 +284,7 @@ async function drawFva(d, k) {
   const el = $("fva" + k), leg = $("fvaL" + k);
   if (!el) return;
   const times = d.obs.hours.map((_, i) => d.windowStart + i * 3600e3);
-  const ser = [{ name: "Actual", color: "var(--text)", width: 3, values: d.obs.hours.map(cvt) }];
+  const ser = [{ name: "Actual", color: "var(--text)", width: 3, fill: true, values: d.obs.hours.map(cvt) }];
   const snap = await snapshot(d.setDate || d.date);
   const markers = [];
   if (d.obs.rained) markers.push({ t: d.obs.rainStart, label: "rain began", color: "var(--rain)", width: 2 });
@@ -330,7 +332,7 @@ function renderLongTerm(loc) {
       <th title="Average size of the high-temperature miss">High miss</th><th title="Average signed high miss: + runs warm, − runs cold">High bias</th><th>Highs ±3°F</th>
       <th>Low miss</th><th>Low bias</th><th>Lows ±3°F</th><th>Hourly miss</th>
       <th>Rain right</th><th title="Hits / misses / false alarms">Hit · Miss · False</th><th title="Average gap between forecast and actual rain start, for hits">Rain timing</th><th title="0 is perfect">Brier</th></tr></thead><tbody>` +
-    ranked.map(r => { const a = r.a, ps = isPseudo(r.id); if (!ps) rank++; return `<tr class="${ps ? "blendrow" : ""}${!ps && rank === 1 ? " rank1" : ""}"><td data-label="#">${ps ? "" : rank}</td>${nameCell(r.id)}${td("Score", scoreBadge(a.score))}${td("Days", a.n)}
+    ranked.map(r => { const a = r.a, ps = isPseudo(r.id); if (!ps) rank++; return `<tr class="${ps ? "blendrow" : ""}${!ps && rank === 1 ? " rank1" : ""}"><td data-label="#">${ps ? "" : rank}</td>${nameCell(r.id).replace("</th>", scoreBar(a.score) + "</th>")}${td("Score", scoreBadge(a.score))}${td("Days", a.n)}
       ${td("High miss", A(a.hiMAE))}${td("High bias", bias(a.hiBias), "x")}${td("Highs ±3°F", pct(a.hi3.ok, a.hi3.n), "x")}
       ${td("Low miss", A(a.loMAE))}${td("Low bias", bias(a.loBias), "x")}${td("Lows ±3°F", pct(a.lo3.ok, a.lo3.n), "x")}${td("Hourly miss", A(a.mae))}
       ${td("Rain right", isNum(a.rainRight) ? Math.round(a.rainRight * 100) + "%" : "—")}${td("Hit · Miss · False", `${a.rain.hit} · ${a.rain.miss} · ${a.rain.false}`, "x")}

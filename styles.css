@@ -497,3 +497,27 @@ details.fold > summary { cursor: pointer; font-size: 15px; font-weight: 650; pad
   #accOverall:not(.allcols) td.x { display: none; }
   #accOverall:not(.allcols) tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* Rain in the Best hourly strip: amount, a word, and a bar that grows with the rate */
+.bh-q { display: none; font-size: 11px; font-weight: 650; min-height: 34px; line-height: 1.25; }
+.best-hours.has-rain .bh-q { display: block; }
+.bh-l { display: block; font-weight: 500; font-size: 10px; color: var(--text-2); }
+.bh-bar { display: block; height: 4px; border-radius: 2px; margin: 3px auto 0; background: #9cc8ff; width: 30%; }
+.bhour.wet2 .bh-bar { width: 60%; background: #6aaeff; }
+.bhour.wet3 .bh-bar { width: 90%; background: #fff; }
+.bhour.wet1, .bhour.wet2, .bhour.wet3 { background: rgba(120,175,255,.26); }
+.bhour.wet3 { background: rgba(120,175,255,.42); }
+
+/* Hourly table: each cell tinted by its temperature */
+.hourly td.heat { background: hsl(var(--hue) 70% 50% / .13); }
+tr.avgrow td.heat { background: color-mix(in srgb, hsl(var(--hue) 70% 50%) 16%, var(--surface-2)); }
+
+/* Charts */
+.chart .pk { font-size: 12px; font-weight: 700; fill: var(--text); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+
+/* Score bars in the long-term scoreboard */
+.sbar { display: block; height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 5px; min-width: 110px; overflow: hidden; }
+.sbar i { display: block; height: 100%; border-radius: 3px; background: var(--text-3); }
+.sbar.b-good i { background: var(--good); } .sbar.b-warning i { background: var(--warning); } .sbar.b-serious i { background: var(--serious); } .sbar.b-critical i { background: var(--critical); }
+tr.blendrow .sbar { background: var(--surface); }
+.best-hours.has-rain .bhour { flex-basis: 66px; }
