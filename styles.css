@@ -521,3 +521,27 @@ tr.avgrow td.heat { background: color-mix(in srgb, hsl(var(--hue) 70% 50%) 16%, 
 .sbar.b-good i { background: var(--good); } .sbar.b-warning i { background: var(--warning); } .sbar.b-serious i { background: var(--serious); } .sbar.b-critical i { background: var(--critical); }
 tr.blendrow .sbar { background: var(--surface); }
 .best-hours.has-rain .bhour { flex-basis: 66px; }
+
+/* Drawn weather icons (src/icons.js). Sized by the text around them. */
+:root { --wi-sun: #f5a800; --wi-moon: #e9b530; --wi-cloud: #aab6c8; --wi-cloud2: #8794a8; --wi-rain: #2f7fe6; --wi-snow: #62b6f0; --wi-bolt: #f5a800; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --wi-sun: #ffc531; --wi-moon: #ffd96a; --wi-cloud: #d3dbe8; --wi-cloud2: #93a0b5; --wi-rain: #62a8ff; --wi-snow: #a9dcff; --wi-bolt: #ffc531; } }
+:root[data-theme="dark"] { --wi-sun: #ffc531; --wi-moon: #ffd96a; --wi-cloud: #d3dbe8; --wi-cloud2: #93a0b5; --wi-rain: #62a8ff; --wi-snow: #a9dcff; --wi-bolt: #ffc531; }
+.best-on { --wi-sun: #ffd04a; --wi-moon: #ffe08a; --wi-cloud: #fff; --wi-cloud2: #c3d0e6; --wi-rain: #9fd0ff; --wi-snow: #d8f0ff; --wi-bolt: #ffd04a; }
+.wi { width: 1.3em; height: 1.3em; vertical-align: -.3em; display: inline-block; flex: none; }
+.best-temps .wi { width: 1.2em; height: 1.2em; vertical-align: 0; display: block; }
+.cell .ci .wi, .gtable .ni .wi, .stgrid .ni .wi { display: block; margin: 0 auto; }
+
+/* Best card: one row per day with a low-to-high range bar */
+.best-rows { margin-top: 12px; display: grid; gap: 2px; }
+.brow { display: grid; grid-template-columns: 3.1em 1.9em 2.5em minmax(40px, 1fr) 2.5em minmax(2.6em, auto); align-items: center; gap: 2px 8px; padding: 7px 10px; border-radius: 12px; }
+.brow:nth-child(odd) { background: rgba(255,255,255,.07); }
+.br-d { font-weight: 650; font-size: 14px; }
+.br-i { font-size: 19px; line-height: 1; }
+.br-lo, .br-hi { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 15px; }
+.br-lo { text-align: right; color: var(--text-3); font-weight: 500; }
+.br-bar { position: relative; height: 6px; border-radius: 3px; background: rgba(255,255,255,.16); }
+.br-bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 6px; }
+.br-bar b { position: absolute; top: -3px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: #fff; border: 3px solid var(--sky1); box-sizing: border-box; }
+.br-c { text-align: right; }
+.br-c .conf { font-size: 11px; }
+.br-r { grid-column: 3 / -1; font-size: 12px; color: var(--text-2); }

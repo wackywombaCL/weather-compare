@@ -1,8 +1,9 @@
 import { PROXY_URL } from "./config.js";
-import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, setProxy, isRainyHour, localHourStart, icon, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
+import { PRESETS, PENDING_SOURCES, SOURCES, setKeyProvider, setProxy, isRainyHour, localHourStart, catLabel, isNum, mean, mode, dayKey, localHour } from "./sources.js";
 import { recentScores, smartWeights, rating, MIN_DAYS_FOR_WEIGHT, elementSkill, elementWeights, elementLeader, ELEMENTS, BEST_MIN_DAYS, bestRecord, bestTypical } from "./skill.js";
 import { initAccuracy, renderAccuracy, accData } from "./accuracy.js";
 import { weightsBy, biasFor, bestHours, nudge } from "./best.js";
+import { wicon } from "./icons.js";
 import { NOW_STATIONS, fetchObsNow } from "./stations.js";
 
 const HOURS = 30;
@@ -213,7 +214,7 @@ function renderCards() {
     if (r.status === "error") return `<div class="${cls} err">${head}<div class="big"><span class="t">—</span></div><div class="cond">${esc(r.error)}</div></div>`;
     const c = r.data.current, d = r.data.daily[today];
     return `<div class="${cls}">${head}
-      <div class="big"><span class="i" aria-hidden="true">${icon(c.cat, c.night)}</span><span class="t">${T(c.temp)}</span></div>
+      <div class="big"><span class="i" aria-hidden="true">${wicon(c.cat, c.night)}</span><span class="t">${T(c.temp)}</span></div>
       <div class="cond">${esc(c.text)}</div>
       <div class="meta">Feels ${T(c.feels)} · ${P(c.humidity)} · ${W(c.wind)} ${esc(dir(c.windDir))}</div>
       <div class="meta">Today ${d ? `${T(d.hi)} / ${T(d.lo)}${d.partial ? "*" : ""}${wetAmt(d.qpf) ? ` · ☔ ${R(d.qpf)}` : ""}` : "—"} · <span title="${esc(r.data.note)}">${esc(ago(c.observedAt))}</span></div>
@@ -248,7 +249,7 @@ function renderAverage() {
   const cat = mode(cur.map(([, c]) => c.cat));
   $("avgNow").innerHTML = `
     <div class="src" style="font-weight:600;font-size:14px">Now · ${ok.length} source${ok.length > 1 ? "s" : ""}</div>
-    <div class="big"><span class="i" aria-hidden="true">${icon(cat, night)}</span><span class="t">${T(wmean(cur.map(([id, c]) => [id, c.temp]), weights))}</span></div>
+    <div class="big"><span class="i" aria-hidden="true">${wicon(cat, night)}</span><span class="t">${T(wmean(cur.map(([id, c]) => [id, c.temp]), weights))}</span></div>
     <div class="cond">${esc(catLabel(cat, night))}</div>
     <div class="spread">Range ${T(Math.min(...temps))} to ${T(Math.max(...temps))}</div>
     <div class="meta" style="margin-top:6px">Feels ${T(wmean(cur.map(([id, c]) => [id, c.feels]), weights))} · ${P(wmean(cur.map(([id, c]) => [id, c.humidity]), weights))} · ${W(wmean(cur.map(([id, c]) => [id, c.wind]), weights))}</div>`;
@@ -262,7 +263,7 @@ function renderAverage() {
     const rain = isNum(avgPop) && avgPop > RAIN_SHOW_POP ? avgRainStart(ok, d.key, i === 0 ? nowHour : null, weights) : null;
     return `<div class="day">
       <div class="dn">${i === 0 ? "Today" : fmtDay(d.ms, tz)}</div>
-      <div class="di" aria-hidden="true">${ds.length ? icon(c, false) : ""}</div>
+      <div class="di" aria-hidden="true">${ds.length ? wicon(c, false) : ""}</div>
       <div class="hl">${T(wmean(ds.map(([id, x]) => [id, x.hi]), weights))} <span class="lo">${T(wmean(ds.map(([id, x]) => [id, x.lo]), weights))}</span></div>
       <div class="pp">💧 ${P(avgPop)}${(() => { const q = wmean(ds.map(([id, x]) => [id, x.qpf]), weights); return wetAmt(q) ? ` · ☔ ${R(q)}` : ""; })()}</div>
       ${rain ? `<div class="rs" title="Average of when each source has rain starting (${rain.n} of ${rain.of} sources call for rain that day)">🌧️ ${rain.now ? "now" : "~" + esc(fmtTime(rain.t, tz))}<span class="rsn"> · ${rain.n}/${rain.of}</span></div>` : ""}
@@ -371,6 +372,9 @@ function renderBest() {
   const cur = obs ? obs.temp : wmean(ok.map(s => [s.id, state.results[s.id].data.current.temp]), W(0, "temp")) ?? hr.rows[0]?.temp;
   const nowTitle = obs ? `Measured at ${obs.names.join(", ")} ${ago(obs.at)}` : "Right now, as the sources report it";
   const strip = hr.rows.slice(0, 24).filter(r => r && isNum(r.temp));
+  // Range bars: each day's low-to-high, placed along the coldest-to-warmest span of all the days.
+  const span = dayInfo.flatMap(x => [x.lo, x.hi]).concat(isNum(cur) ? [cur] : []).filter(isNum), spanLo = Math.min(...span), spanHi = Math.max(...span);
+  const pos = v => +(Math.max(0, Math.min(1, (v - spanLo) / ((spanHi - spanLo) || 1))) * 100).toFixed(1);
   const leaders = Object.keys(ELEMENTS).map(e => ({ e, L: elementLeader(sk[0], e, ids) })).filter(x => x.L);
   const pill = (txt, title) => `<span class="bpill" title="${esc(title)}">${txt}</span>`;
   // Card colour follows the sky: night, wet, grey or clear.
@@ -382,7 +386,7 @@ function renderBest() {
     <div class="best-hero">
       <div class="best-main">
         <div class="best-kicker">Best forecast · today${trackedLocs() ? "" : " · tuned on Vallejo + Napa"}</div>
-        <div class="best-temps"><span class="i" aria-hidden="true">${icon(t.cat, night && isNum(cur))}</span>${isNum(cur) ? `<span class="hi" title="${esc(nowTitle)}">${T(cur)}</span><span class="hl"><span title="Today's high">↑ ${T(t.hi)}</span><span title="Today's low">↓ ${T(t.lo)}</span></span>` : `<span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span>`}</div>
+        <div class="best-temps"><span class="i" aria-hidden="true">${wicon(t.cat, night && isNum(cur))}</span>${isNum(cur) ? `<span class="hi" title="${esc(nowTitle)}">${T(cur)}</span><span class="hl"><span title="Today's high">↑ ${T(t.hi)}</span><span title="Today's low">↓ ${T(t.lo)}</span></span>` : `<span class="hi">${T(t.hi)}</span><span class="lo">${T(t.lo)}</span>`}</div>
         <div class="cond">${esc(catLabel(t.cat, false))}${isNum(cur) ? " today" : ""}${sure(t, true) ? " · " + sure(t, true) : ""}</div>
       </div>
       <div class="best-pills">
@@ -396,19 +400,20 @@ function renderBest() {
     <div class="best-hours${strip.some(r => rainLevel(r.qpf)) ? " has-rain" : ""}" role="list" aria-label="Best forecast, next 24 hours">${strip.map((r, k) => `
       <div class="bhour${rainLevel(r.qpf) ? " wet" + rainLevel(r.qpf) : ""}" role="listitem" title="${esc(rainLevel(r.qpf) ? `${RAIN_WORD[rainLevel(r.qpf)]} rain, about ${R(r.qpf)} this hour` : "")}">
         <div class="bh-t">${k === 0 ? "Now" : esc(fmtHour(r.t, tz))}</div>
-        <div class="bh-i" aria-hidden="true">${icon(r.cat, isNightHour(r.t, tz))}</div>
+        <div class="bh-i" aria-hidden="true">${wicon(r.cat, isNightHour(r.t, tz))}</div>
         <div class="bh-v">${T(k === 0 ? cur : r.temp)}</div>
         <div class="bh-p">${isNum(r.pop) && r.pop >= 20 ? "💧" + Math.round(r.pop) + "%" : "&nbsp;"}</div>
         <div class="bh-q">${rainLevel(r.qpf) ? `${R(r.qpf, false)}${state.units === "F" ? "″" : " mm"}<span class="bh-l">${RAIN_WORD[rainLevel(r.qpf)]}</span><i class="bh-bar"></i>` : "&nbsp;"}</div>
       </div>`).join("")}</div>
-    <div class="best-days">${dayInfo.slice(1).map(x => `
-      <div class="bday">
-        <div class="dn">${esc(fmtDay(x.d.ms, tz))}</div>
-        <div class="di" aria-hidden="true">${icon(x.cat, false)}</div>
-        <div class="hl">${T(x.hi)} <span class="lo">${T(x.lo)}</span></div>
-        <div class="pp">💧 ${P(x.pop)}${wetAmt(x.qpf) ? ` · ☔ ${R(x.qpf)}` : ""}</div>
-        ${x.rain ? `<div class="rs">🌧️ ~${esc(fmtTime(x.rain.t, tz))}</div>` : ""}
-        ${sure(x, false)}
+    <div class="best-rows" role="list" aria-label="Best forecast by day">${dayInfo.map(x => `
+      <div class="brow" role="listitem">
+        <div class="br-d">${x.i === 0 ? "Today" : esc(fmtDay(x.d.ms, tz))}</div>
+        <div class="br-i">${wicon(x.cat, false)}</div>
+        <div class="br-lo" title="Low">${T(x.lo)}</div>
+        <div class="br-bar" title="Low to high, placed along the range for all ${dayInfo.length} days">${isNum(x.lo) && isNum(x.hi) ? `<i style="left:${pos(x.lo)}%;right:${100 - pos(x.hi)}%;background:linear-gradient(90deg,hsl(${tempHue(x.lo)} 85% 62%),hsl(${tempHue(x.hi)} 85% 62%))"></i>` : ""}${x.i === 0 && isNum(cur) ? `<b style="left:${pos(cur)}%" title="Now"></b>` : ""}</div>
+        <div class="br-hi" title="High">${T(x.hi)}</div>
+        <div class="br-c">${sure(x, false)}</div>
+        ${isNum(x.pop) && x.pop >= 20 || x.rain || wetAmt(x.qpf) ? `<div class="br-r">💧 ${P(x.pop)}${wetAmt(x.qpf) ? ` · ☔ ${R(x.qpf)}` : ""}${x.rain ? ` · 🌧️ ${x.rain.now ? "raining now" : "from ~" + esc(fmtTime(x.rain.t, tz))}` : ""}</div>` : ""}
       </div>`).join("")}</div>
     <div class="best-foot">
       ${rec ? `<a class="best-track" href="#accuracy" title="See the Best forecast report card">Track record: <b>${rec.score.toFixed(1)}</b> average score over ${rec.n} scored ${locs.length > 1 ? "forecasts" : "days"} · #${rec.rank} of ${rec.of} ›</a>` : ""}
@@ -458,7 +463,7 @@ function renderDaily() {
     html += `<tr class="avgrow"><th>${state.avgMode === "smart" && weights ? "Smart average" : "Average"}</th>`;
     for (const d of days) {
       const ds = ok.map(s => [s.id, state.results[s.id].data.daily[d.key]]).filter(([, x]) => x);
-      html += `<td class="cell"><span class="ci" aria-hidden="true">${ds.length ? icon(mode(ds.map(([, x]) => x.cat)), false) : ""}</span>
+      html += `<td class="cell"><span class="ci" aria-hidden="true">${ds.length ? wicon(mode(ds.map(([, x]) => x.cat)), false) : ""}</span>
         <span class="ct">${T(wmean(ds.map(([id, x]) => [id, x.hi]), weights))} <span class="lo">${T(wmean(ds.map(([id, x]) => [id, x.lo]), weights))}</span></span>
         <span class="cp">💧 ${P(wmean(ds.map(([id, x]) => [id, x.pop]), weights))}</span>${(() => { const q = wmean(ds.map(([id, x]) => [id, x.qpf]), weights); return wetAmt(q) ? `<span class="cq">☔ ${R(q)}</span>` : ""; })()}</td>`;
     }
@@ -473,7 +478,7 @@ function renderDaily() {
       const x = r.data.daily[d.key];
       if (!x) { html += `<td class="cell na">—</td>`; continue; }
       html += `<td class="cell" title="${esc(x.text || catLabel(x.cat))}${x.partial ? " (rest of today only)" : ""}${x.nightOnly ? " (tonight)" : ""}">
-        <span class="ci" aria-hidden="true">${icon(x.cat, !!x.nightOnly)}</span>
+        <span class="ci" aria-hidden="true">${wicon(x.cat, !!x.nightOnly)}</span>
         <span class="ct">${T(x.hi)} <span class="lo">${T(x.lo)}</span>${x.partial ? "*" : ""}</span>
         <span class="cp">💧 ${P(x.pop)}</span>${wetAmt(x.qpf) ? `<span class="cq">☔ ${R(x.qpf)}</span>` : ""}</td>`;
     }
@@ -536,7 +541,7 @@ function renderHourly() {
       const showIcon = key !== lastCat || i === 0; lastCat = key;
       const wet = isNum(h.pop) && h.pop >= 20;
       const amt = isNum(h.qpf) && h.qpf >= 0.01;
-      return `<td class="cell heat ${newDay[i] ? "newday" : ""}${isRainyHour(h) ? " wet" : ""}" style="--hue:${tempHue(h.temp)}" title="${esc(h.text || catLabel(h.cat))}${isNum(h.pop) ? ` · ${Math.round(h.pop)}% rain` : ""}${isNum(h.qpf) ? ` · ${R(h.qpf)}` : ""}"><span class="ci" aria-hidden="true">${showIcon ? icon(h.cat, h.night) : ""}</span><span class="ct">${T(h.temp)}</span><span class="cp">${wet ? Math.round(h.pop) + "%" : ""}</span><span class="cq">${amt ? R(h.qpf, false) : ""}</span></td>`;
+      return `<td class="cell heat ${newDay[i] ? "newday" : ""}${isRainyHour(h) ? " wet" : ""}" style="--hue:${tempHue(h.temp)}" title="${esc(h.text || catLabel(h.cat))}${isNum(h.pop) ? ` · ${Math.round(h.pop)}% rain` : ""}${isNum(h.qpf) ? ` · ${R(h.qpf)}` : ""}"><span class="ci" aria-hidden="true">${showIcon ? wicon(h.cat, h.night) : ""}</span><span class="ct">${T(h.temp)}</span><span class="cp">${wet ? Math.round(h.pop) + "%" : ""}</span><span class="cq">${amt ? R(h.qpf, false) : ""}</span></td>`;
     }).join("");
   };
   let body = "";

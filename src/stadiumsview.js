@@ -3,6 +3,7 @@
 // and what the blend is built from. Data: data/stadiums/skill.json and forecast.json, written by
 // scripts/stadiums.mjs.
 import { $, esc, store, T, R } from "./common.js";
+import { wicon } from "./icons.js";
 import { icon, wmoInfo, isNum } from "./sources.js";
 import { rating } from "./skill.js";
 import { TRACKED, stadiumKey, findStadium } from "./stadiums.js";
@@ -71,7 +72,7 @@ function render(el, skill, fc, sched) {
     const g = games[x.k]?.[d];
     return `<td class="${g ? "gameday" : ""}" title="${esc(txt)}${g ? " · " + esc(g) : ""}">
       ${g ? `<div class="gd">🏈 ${esc(g)}</div>` : ""}
-      <div class="ni">${icon(cat, false)}</div>
+      <div class="ni">${wicon(cat, false)}</div>
       <div class="nt">${T(day.hi)} <span class="sub2${cold ? " hot" : ""}">${T(day.lo)}</span></div>
       <div class="nw${windy ? " hot" : ""}">💨 ${isNum(day.wind) ? day.wind : "—"}${isNum(day.gust) && day.gust - day.wind >= 5 ? `<span class="nd"> g${day.gust}</span>` : ""}<span class="nd"> ${compass(day.wdir)}</span></div>
       <div class="np${wet ? " hot" : ""}">${day.snow >= 0.1 ? `❄️ ${day.snow.toFixed(1)}"` : `💧${isNum(day.pop) ? day.pop + "%" : "—"}`}<span class="nd">${day.snow < 0.1 && day.qpf >= 0.01 ? " " + R(day.qpf, false) + '"' : ""}</span></div>

@@ -3,6 +3,7 @@
 // and fog, plus how much rain fell in the 48 hours before (field conditions).
 // Schedule: data/nfl.json (from ESPN, refreshed by a GitHub job). Forecasts: Open-Meteo.
 import { $, esc, store, T, R } from "./common.js";
+import { wicon } from "./icons.js";
 import { findStadium, stadiumKey } from "./stadiums.js";
 import { addBest } from "./stadiumskill.js";
 import { loadData, blendNote } from "./stadiumsview.js";
@@ -142,7 +143,7 @@ function gameCard(g, v, wx, flags, gw, agree, W) {
     const strong = h.wind >= LIMITS.wind.note || h.gust >= LIMITS.wind.gustNote;
     const wet = (h.qpf ?? 0) >= 0.01 || (h.snow ?? 0) >= 0.1;
     return `<td>
-      <div class="ni" title="${esc(txt)}">${icon(cat, night)}</div>
+      <div class="ni" title="${esc(txt)}">${wicon(cat, night)}</div>
       <div class="nt">${T(h.temp)}${isNum(h.feels) && Math.abs(h.feels - h.temp) >= 4 ? `<span class="nf"> feels ${T(h.feels)}</span>` : ""}</div>
       <div class="nw${strong ? " hot" : ""}" title="Wind ${mph(h.wind)} mph${isNum(h.gust) ? `, gusts ${mph(h.gust)}` : ""} from the ${dir(h.wdir)}${windVsField(v.axis, h.wdir) ? ": " + windVsField(v.axis, h.wdir).text : ""}">💨 ${mph(h.wind)}<span class="nd">${isNum(h.gust) && h.gust - h.wind >= 5 ? `g${mph(h.gust)} ` : ""}${dir(h.wdir)}${(() => { const r = windVsField(v.axis, h.wdir); return r ? ` <span class="rel">${r.kind === "cross" ? "↔ cross" : r.kind === "along" ? "↕ along" : "⤢ angled"}</span>` : ""; })()}</span></div>
       <div class="np${wet ? " hot" : ""}">${(h.snow ?? 0) >= 0.1 ? `❄️ ${h.snow.toFixed(1)}"` : `💧${isNum(h.pop) ? Math.round(h.pop) + "%" : "—"}`}<span class="nd">${(h.snow ?? 0) < 0.1 && (h.qpf ?? 0) >= 0.01 ? R(h.qpf, false) + '"' : "&nbsp;"}</span></div>
