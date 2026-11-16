@@ -34,3 +34,5 @@ jobs:
         run: node tests/widget.test.mjs
       - name: Best forecast track record test
         run: node tests/best-record.test.mjs
+      - name: History trim and weekly scorecard test
+        run: node tests/trim.test.mjs

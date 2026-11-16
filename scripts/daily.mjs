@@ -7,7 +7,9 @@
 // 2. SCORE: once a window has ended, pull the NWS station observations and score each source:
 //    high/low miss, hourly miss, rain hit/miss/false alarm, rain start timing, Brier score.
 // 3. STATUS + ALERTS: write data/status.json (shown in the app) and, if NTFY_TOPIC is set,
-//    send phone notifications for problems and for rainy days.
+//    send phone notifications for problems, for rainy days and a weekly scorecard (Sundays).
+// 4. TRIM (about monthly): move old scored days to data/history/ and delete old saved forecasts
+//    (scripts/trim.mjs), so the app's files stay small.
 //
 // Usage: node scripts/daily.mjs            (normal; only sets the forecast between 6 and 10am Pacific)
 //        FORCE=true node scripts/daily.mjs (set today's forecast now, whatever the time)
@@ -16,7 +18,8 @@ import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { SOURCES, PRESETS, isRainyHour, setRequestInit, setKeyProvider, getJSON, dayKey, localHour, localHourStart, isNum, mean, mode, cToF } from "../src/sources.js";
-import { recentScores, smartWeights, PSEUDO_NAMES, elementSkill, elementWeights, BEST_MIN_DAYS } from "../src/skill.js";
+import { recentScores, smartWeights, PSEUDO_NAMES, elementSkill, elementWeights, BEST_MIN_DAYS, bestRecord, rating } from "../src/skill.js";
+import { trimHistory } from "./trim.mjs";
 
 export const TZ = "America/Los_Angeles";
 export const SET_HOUR = 6;
@@ -391,6 +394,29 @@ async function notify({ title, body, tags }, log) {
   } catch (e) { log(`  notification failed: ${e.message}`); }
 }
 
+// Sunday scorecard: how the Best forecast and each source did over the last 7 scored days.
+export function weeklySummary(scores) {
+  const ids = SOURCES.map(s => s.id), short = id => scores.sources?.[id]?.short || SOURCES.find(s => s.id === id)?.short || id;
+  const pool = scores.days.filter(d => (d.lead ?? 0) === 0 && !d.partial);
+  const dates = [...new Set(pool.map(d => d.date))].sort().slice(-7);
+  if (dates.length < 3) return null;
+  const week = pool.filter(d => dates.includes(d.date));
+  const rs = recentScores(week, { lead: 0, n: 7 }).scores;
+  const ranked = ids.filter(id => rs[id]?.n >= Math.ceil(week.length / 2)).map(id => [id, rs[id].score]).sort((a, b) => b[1] - a[1]);
+  if (ranked.length < 2) return null;
+  const lines = [];
+  const rec = bestRecord(week, { lead: 0, ids });
+  if (rec) {
+    const towns = LOCATIONS.map(l => { const r = bestRecord(week, { locs: [l.id], lead: 0, ids }); return r ? `${l.name.replace(", CA", "")} ${Math.round(r.score)}` : null; }).filter(Boolean).join(", ");
+    lines.push(`Best forecast: ${Math.round(rec.score)} (${rating(rec.score).label}), #${rec.rank} of ${rec.of}${towns ? ` · ${towns}` : ""}`);
+    lines.push(`It beat the plain average on ${rec.beatAvg} of ${rec.nAvg} forecasts and every single source on ${rec.beatAll}. Typical miss: high ${rec.hiMAE.toFixed(1)}°, low ${rec.loMAE.toFixed(1)}°.`);
+  }
+  lines.push(`Top sources: ${ranked.slice(0, 3).map(([id, v]) => `${short(id)} ${Math.round(v)}`).join(", ")}`);
+  lines.push(`Lowest: ${ranked.slice(-2).reverse().map(([id, v]) => `${short(id)} ${Math.round(v)}`).join(", ")}`);
+  const fmt = d => new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(Date.parse(d));
+  return { title: `Weekly forecast scorecard (${fmt(dates[0])} – ${fmt(dates.at(-1))})`, body: lines.join("\n") };
+}
+
 function rainOutlook(snap, locId, now) {
   const L = snap.locations[locId], lead = snap.leads[0];
   if (!L) return null;
@@ -483,10 +509,21 @@ export async function run({ dataDir, now = Date.now(), force = false, log = cons
       }
     }
   }
+  // Weekly scorecard: Sunday morning, once yesterday has been scored (or by 9am regardless).
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(now);
+  const wkKey = `weekly|${today}`;
+  if (weekday === "Sun" && hr >= SET_HOUR && !status.alerted[wkKey] && (hr >= 9 || scores.days.some(d => d.date === addDays(today, -1) && (d.lead ?? 0) === 0))) {
+    const wk = weeklySummary(scores);
+    if (wk) { await notify({ ...wk, tags: "bar_chart" }, log); status.alerted[wkKey] = now; }
+  }
+  // 4. TRIM (does something about once a month)
+  let trimmed = false;
+  try { const t = await trimHistory({ dataDir, scores, today, log }); trimmed = t.moved > 0; }
+  catch (e) { problems.push(`History trim failed: ${e.message}`); }
   for (const s of SOURCES) scores.sources[s.id] = { name: s.name, short: s.short, group: s.group || null };
   for (const [id, name] of Object.entries(PSEUDO_NAMES)) scores.sources[id] = { name, short: { avg: "Average", smart: "Smart avg", best: "Best" }[id], group: "blend" };
   scores.version = 2;
-  if (changed || setNow) {
+  if (changed || setNow || trimmed) {
     scores.days.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.lead ?? 0) - (b.lead ?? 0) || (a.loc < b.loc ? -1 : 1));
     scores.updated = now;
     await writeJSON(scoresFile, scores);

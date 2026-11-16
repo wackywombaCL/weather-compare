@@ -137,8 +137,11 @@
       </div>
       <p class="hint">“1 day ahead” scores the forecast each source made the morning before; “2 days ahead”, two mornings before. The <i>Average</i> and <i>Smart average</i> rows are blends of all sources, tracked like any other forecast.</p>
       <div class="panel scroll"><table class="acc stack" id="accOverall"></table></div>
-      <h3 style="font-size:14px;margin:16px 0 6px">By season</h3>
-      <div class="panel scroll"><table class="acc stack" id="accSeason"></table></div>
+      <button class="btn phone-only" id="accMore" style="margin-top:8px">All numbers</button>
+      <details class="fold" id="accSeasonBox">
+        <summary>By season</summary>
+        <div class="panel scroll"><table class="acc stack" id="accSeason"></table></div>
+      </details>
       <details class="how">
         <summary>How scoring works</summary>
         <ul>

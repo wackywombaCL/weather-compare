@@ -628,6 +628,7 @@ let radarMod = null, nflMod = null, stMod = null;
 function showTab(name) {
   if (!TABS[name]) name = "forecast";
   for (const [k, [tab, view]] of Object.entries(TABS)) { $(tab).setAttribute("aria-selected", String(k === name)); $(view).hidden = k !== name; }
+  document.body.dataset.tab = name;   // the city picker only shows on the Forecast tab (styles.css)
   const hash = name === "forecast" ? "" : "#" + name;
   if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname + location.search);
   if (name === "accuracy") renderAccuracy();

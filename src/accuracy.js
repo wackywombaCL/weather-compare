@@ -22,8 +22,27 @@ export function initAccuracy() {
     acc.loaded = true;
     acc.loading = null;
     renderAccuracy();
+    if (acc.scores) loadHistory(acc.scores, bust);
   })();
   return acc.loading;
+}
+
+// Days older than about two months live in data/history/{year}.json (moved there monthly by
+// scripts/trim.mjs). They load in the background and join the all-time tables when they arrive.
+async function loadHistory(scores, bust) {
+  try {
+    const r = await fetch("data/history/index.json" + bust, { cache: "no-store" });
+    if (!r.ok) return;
+    const idx = await r.json();
+    const parts = await Promise.all((idx.files || []).map(f => fetch(`data/history/${f}?v=${idx.updated}`).then(x => x.ok ? x.json() : null).catch(() => null)));
+    if (acc.scores !== scores) return;                     // refreshed meanwhile
+    const key = d => `${d.date}|${d.loc}|${d.lead ?? 0}`, seen = new Set(scores.days.map(key));
+    const old = parts.flatMap(p => p?.days || []).filter(d => !seen.has(key(d)));
+    if (!old.length) return;
+    scores.days = [...old, ...scores.days].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    renderAll();
+    renderAccuracy();
+  } catch {}
 }
 
 async function snapshot(date) {
@@ -47,6 +66,7 @@ function todayEntry(snap, locId, id) {
 }
 
 // ---------- Helpers ----------
+const wide = () => matchMedia("(min-width: 641px)").matches;   // phones start with long lists folded
 const pct = (num, den) => den ? Math.round(100 * num / den) + "%" : "—";
 function aggregate(days, id) {
   const rows = days.map(d => d.src[id]).filter(s => s?.ok);
@@ -188,17 +208,21 @@ function renderToday(loc) {
     const L = snap.locations[lid];
     if (!L) return "";
     const ids = Object.keys(L.sources).filter(shown).sort((a, b) => (isPseudo(b) - isPseudo(a)) || ((acc.scores ? 0 : 0)));
-    const rows = ids.map(id => {
+    const row = id => {
       const x = todayEntry(snap, lid, id);
       if (!x) return "";
       if (!x.ok) return `<tr>${nameCell(id)}<td colspan="5" class="l miss" data-label="">Couldn't save: ${esc(x.error)}</td></tr>`;
       return `<tr class="${isPseudo(id) ? "blendrow" : ""}">${nameCell(id)}${td("High", T(x.hi))}${td("Low", T(x.lo))}${td("Max rain chance", isNum(x.maxPop) ? Math.round(x.maxPop) + "%" : "—")}
         ${td("Rain total", isNum(x.qpfTotal) ? R(x.qpfTotal) : "—")}
         ${td("Rain expected", x.rainStart ? "🌧️ from " + esc(fmtTime(x.rainStart, TZ)) + (x.rainStart >= lead0.windowStart + 18 * 3600e3 ? " (" + esc(fmtDayLong(x.rainStart, TZ).split(",")[0]) + ")" : "") : "No rain", "l")}</tr>`;
-    }).join("");
+    };
+    const head = `<thead><tr><th>Source</th><th>High</th><th>Low</th><th>Max rain chance</th><th>Rain total</th><th style="text-align:left">Rain expected</th></tr></thead>`;
+    const blends = ids.filter(isPseudo), singles = ids.filter(id => !isPseudo(id));
     return `<div class="panel daycard">
       <h3>${esc(locName(lid))} · ${esc(fmtDayLong(lead0.windowStart, TZ))} <span class="sub2">set ${esc(fmtTime(snap.setAt, TZ))}, covers 6am → 6am</span></h3>
-      <table class="acc stack"><thead><tr><th>Source</th><th>High</th><th>Low</th><th>Max rain chance</th><th>Rain total</th><th style="text-align:left">Rain expected</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <table class="acc stack today">${head}<tbody>${blends.map(row).join("")}</tbody></table>
+      <details class="srcs"${wide() ? " open" : ""}><summary>Each of the ${singles.length} sources</summary>
+      <table class="acc stack today">${head}<tbody>${singles.map(row).join("")}</tbody></table></details></div>`;
   }).join("");
 }
 
@@ -239,15 +263,15 @@ function renderRecent(loc) {
       <div class="obsline">Actual at ${stn}: high <b>${T(o.hi)}</b>, low <b>${T(o.lo)}</b> · ${rainObs}</div>
       <div class="legend fva-legend" id="fvaL${k}"></div>
       <div class="chart" id="fva${k}"></div>
-      <details class="srcs"${k === 0 || locsFor(loc).length > 1 && k === 1 ? " open" : ""}><summary>All sources for this day</summary>
+      <details class="srcs"${wide() && (k === 0 || locsFor(loc).length > 1 && k === 1) ? " open" : ""}><summary>All sources for this day</summary>
       <table class="acc stack"><thead><tr><th>Source</th><th>Score</th><th>High (miss)</th><th>Low (miss)</th><th>Hourly miss</th><th style="text-align:left">Rain</th></tr></thead><tbody>${rows}</tbody></table></details></div>`;
   }).join("");
   // Summary across the shown days
   const ranked = ids.map(id => ({ id, a: aggregate(recentDays, id) })).filter(r => r.a.n).sort((a, b) => (b.a.score ?? -1) - (a.a.score ?? -1));
-  html += `<div class="panel"><h3 style="font-size:15px;margin:0 0 6px">${dates.length}-day summary</h3>
+  html += `<details class="panel fold" style="margin-top:0"${wide() ? " open" : ""}><summary style="padding:0">${dates.length}-day summary</summary>
     <table class="acc stack"><thead><tr><th>Source</th><th>Avg score</th><th>Avg high miss</th><th>Avg low miss</th><th>Hourly miss</th><th>Rain calls right</th><th>Rain timing</th></tr></thead><tbody>
     ${ranked.map((r, i) => `<tr class="${isPseudo(r.id) ? "blendrow" : ""}${i === 0 ? " rank1" : ""}">${nameCell(r.id)}${td("Avg score", scoreBadge(r.a.score))}${td("Avg high miss", A(r.a.hiMAE))}${td("Avg low miss", A(r.a.loMAE))}${td("Hourly miss", A(r.a.mae))}${td("Rain calls right", pct(r.a.rain.hit + r.a.rain.none, r.a.n))}${td("Rain timing", isNum(r.a.timing) ? "±" + r.a.timing.toFixed(1) + "h" : "—")}</tr>`).join("")}
-    </tbody></table></div>`;
+    </tbody></table></details>`;
   $("accRecent").innerHTML = html;
   wireChips($("recentChips"));
   recentDays.forEach((d, k) => drawFva(d, k));
@@ -307,11 +331,14 @@ function renderLongTerm(loc) {
       <th>Low miss</th><th>Low bias</th><th>Lows ±3°F</th><th>Hourly miss</th>
       <th>Rain right</th><th title="Hits / misses / false alarms">Hit · Miss · False</th><th title="Average gap between forecast and actual rain start, for hits">Rain timing</th><th title="0 is perfect">Brier</th></tr></thead><tbody>` +
     ranked.map(r => { const a = r.a, ps = isPseudo(r.id); if (!ps) rank++; return `<tr class="${ps ? "blendrow" : ""}${!ps && rank === 1 ? " rank1" : ""}"><td data-label="#">${ps ? "" : rank}</td>${nameCell(r.id)}${td("Score", scoreBadge(a.score))}${td("Days", a.n)}
-      ${td("High miss", A(a.hiMAE))}${td("High bias", bias(a.hiBias))}${td("Highs ±3°F", pct(a.hi3.ok, a.hi3.n))}
-      ${td("Low miss", A(a.loMAE))}${td("Low bias", bias(a.loBias))}${td("Lows ±3°F", pct(a.lo3.ok, a.lo3.n))}${td("Hourly miss", A(a.mae))}
-      ${td("Rain right", isNum(a.rainRight) ? Math.round(a.rainRight * 100) + "%" : "—")}${td("Hit · Miss · False", `${a.rain.hit} · ${a.rain.miss} · ${a.rain.false}`)}
-      ${td("Rain timing", isNum(a.timing) ? "±" + a.timing.toFixed(1) + "h" + (Math.abs(a.timingBias) >= 0.5 ? ` <span class="miss">${a.timingBias > 0 ? "late" : "early"}</span>` : "") : "—")}
-      ${td("Brier", isNum(a.brier) ? a.brier.toFixed(2) : "—")}</tr>`; }).join("") + `</tbody>`;
+      ${td("High miss", A(a.hiMAE))}${td("High bias", bias(a.hiBias), "x")}${td("Highs ±3°F", pct(a.hi3.ok, a.hi3.n), "x")}
+      ${td("Low miss", A(a.loMAE))}${td("Low bias", bias(a.loBias), "x")}${td("Lows ±3°F", pct(a.lo3.ok, a.lo3.n), "x")}${td("Hourly miss", A(a.mae))}
+      ${td("Rain right", isNum(a.rainRight) ? Math.round(a.rainRight * 100) + "%" : "—")}${td("Hit · Miss · False", `${a.rain.hit} · ${a.rain.miss} · ${a.rain.false}`, "x")}
+      ${td("Rain timing", isNum(a.timing) ? "±" + a.timing.toFixed(1) + "h" + (Math.abs(a.timingBias) >= 0.5 ? ` <span class="miss">${a.timingBias > 0 ? "late" : "early"}</span>` : "") : "—", "x")}
+      ${td("Brier", isNum(a.brier) ? a.brier.toFixed(2) : "—", "x")}</tr>`; }).join("") + `</tbody>`;
+  $("accOverall").classList.toggle("allcols", !!acc.allCols);
+  $("accMore").textContent = acc.allCols ? "Fewer numbers" : "All numbers";
+  if (!acc.seasonSet) { acc.seasonSet = true; $("accSeasonBox").open = wide(); }
 
   // Seasons: one row per source, columns for the four seasons and wet/dry.
   const cols = [["Winter", metSeason], ["Spring", metSeason], ["Summer", metSeason], ["Fall", metSeason], ["Wet", wetSeason], ["Dry", wetSeason]];
@@ -325,4 +352,5 @@ document.querySelectorAll("#accLoc button").forEach(b => b.addEventListener("cli
   acc.loc = b.dataset.loc; store.set("wc.accLoc", acc.loc); renderAccuracy();
 }));
 document.querySelectorAll("#accLead button").forEach(b => b.addEventListener("click", () => { acc.lead = +b.dataset.lead; renderAccuracy(); }));
+document.getElementById("accMore").addEventListener("click", () => { acc.allCols = !acc.allCols; renderAccuracy(); });
 document.getElementById("accPeriod").addEventListener("change", e => { acc.period = e.target.value; renderAccuracy(); });

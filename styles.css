@@ -474,3 +474,16 @@ details.srcs > summary { cursor: pointer; font-size: 13px; color: var(--text-2);
 .stgrid td.gameday { background: color-mix(in srgb, var(--good) 12%, var(--surface)); }
 .stgrid .gd { font-size: 10px; font-weight: 700; white-space: nowrap; }
 .stgrid .team, .nflgrid .team { font-size: 11px; font-weight: 600; color: var(--text-2); line-height: 1.3; white-space: normal; }
+
+/* The city picker and search only matter on the Forecast tab. */
+body[data-tab]:not([data-tab="forecast"]) .places, body[data-tab]:not([data-tab="forecast"]) .brand .loc { display: none; }
+
+/* Folded sections */
+details.fold { margin-top: 16px; }
+details.fold > summary { cursor: pointer; font-size: 15px; font-weight: 650; padding: 4px 0 8px; }
+.phone-only { display: none; }
+@media (max-width: 640px) {
+  .phone-only { display: inline-block; }
+  #accOverall:not(.allcols) td.x { display: none; }
+  #accOverall:not(.allcols) tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
