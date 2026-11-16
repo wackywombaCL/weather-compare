@@ -171,6 +171,15 @@ async function loadAll(force = false) {
     flush();
   }));
   if (run === state.run) { state.fetchedAt = Date.now(); renderAll(); }
+  // Sources that failed (a service having a bad minute) get one quiet second try 40 seconds later.
+  const failed = SOURCES.filter(s => state.results[s.id]?.status === "error");
+  if (failed.length && run === state.run) setTimeout(async () => {
+    if (run !== state.run || !navigator.onLine) return;
+    await Promise.all(failed.map(async s => {
+      try { const data = await fetchSource(s, loc, controller.signal, true); if (run === state.run) state.results[s.id] = { status: "ok", data }; } catch {}
+    }));
+    if (run === state.run) renderAll();
+  }, 40e3);
 }
 const okSources = () => orderedSources().filter(s => state.results[s.id]?.status === "ok");
 
