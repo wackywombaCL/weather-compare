@@ -412,6 +412,7 @@ function renderBest() {
         <div class="bh-i" aria-hidden="true">${wicon(r.cat, isNightHour(r.t, tz))}</div>
         <div class="bh-v">${T(k === 0 ? cur : r.temp)}</div>
         <div class="bh-p">${isNum(r.pop) && r.pop >= 20 ? "💧" + Math.round(r.pop) + "%" : "&nbsp;"}</div>
+        <div class="bh-w" title="Wind">${isNum(r.wind) ? `${Math.round(state.units === "F" ? r.wind : r.wind * 1.609)}<small> ${state.units === "F" ? "mph" : "km/h"}</small>` : "&nbsp;"}</div>
         <div class="bh-q">${rainLevel(r.qpf) ? `${R(r.qpf, false)}${state.units === "F" ? "″" : " mm"}<span class="bh-l">${RAIN_WORD[rainLevel(r.qpf)]}</span><i class="bh-bar"></i>` : "&nbsp;"}</div>
       </div>`).join("")}</div>
     <div class="best-rows" role="list" aria-label="Best forecast by day">${dayInfo.map(x => `
